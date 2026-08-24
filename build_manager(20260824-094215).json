@@ -1,0 +1,409 @@
+{
+  "name": "build_manager",
+  "nodes": [
+    {
+      "parameters": {
+        "executeOnce": false,
+        "command": "=export PATH=\"/Library/TeX/texbin:$PATH\" && \\\ncd {{$json.build_path}} && \\\nlatexmk -pdf -interaction=nonstopmode -f main.tex"
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        560,
+        0
+      ],
+      "id": "b20787c3-8ae8-403a-9630-659aeeb97d72",
+      "name": "Execute Command",
+      "alwaysOutputData": false,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "0a563147-7e32-4e53-934e-3917b2278b43",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $json.page_id }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Files & media|files",
+              "fileUrls": {
+                "fileUrl": [
+                  {
+                    "name": "={{ $json.file_name }}",
+                    "url": "={{ $json.drive_url }}"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1984,
+        0
+      ],
+      "id": "93fd04f7-379a-43a5-a3ef-30c06ec2b2c1",
+      "name": "Update a database page",
+      "credentials": {
+        "notionApi": {
+          "id": "CcJYI2FD1dOseIwo",
+          "name": "Notion account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const notionPageId = $json.job_page_id || \"unknown\";\n\nconst company = ($json.company || \"company\")\n  .replace(/[^a-z0-9]/gi,'_')\n  .toLowerCase()\n  .slice(0,12);\n\nconst timestamp = new Date()\n  .toISOString()\n  .replace(/[:.]/g,\"-\");\n\nconst buildId = `resume_${company}_${timestamp}`;\n\nconst buildPath =\n`/PATH/TO/N8N_FILES_ROOT/resume-builds/output/${notionPageId}/${buildId}`;\n\nreturn {\n  json:{\n    ...$json,\n    build_id: buildId,\n    build_path: buildPath\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "96c0bd23-985e-4803-bc00-576ad94f0708",
+      "name": "Node0_build_path"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ==========================================\n// Resume Builder: Directory + Fragment Writer\n// ==========================================\n\nconst fs = require(\"fs\");\nconst path = require(\"path\");\n\n// ------------------------------\n// Configuration\n// ------------------------------\n\nconst TEMPLATE_PATH = \"/PATH/TO/RESUME_SYSTEM_ROOT/templates\"; // adjust if needed\nconst buildPath = $json.build_path;\n\n// ------------------------------\n// Safety checks\n// ------------------------------\n\nif (!buildPath) {\n  throw new Error(\"build_path missing from workflow input.\");\n}\n\nif (!fs.existsSync(TEMPLATE_PATH)) {\n  throw new Error(`Template folder not found: ${TEMPLATE_PATH}`);\n}\n\n// ------------------------------\n// Load Inputs\n// ------------------------------\n\nconst professionalBullets = $json.professional_bullets || [];\nconst trainingBullets = $json.training_bullets || [];\nconst skills = $json.skills || {};\n\n// ------------------------------\n// Latex Escape Helper\n// ------------------------------\n\nfunction escapeLatex(text) {\n\n  return String(text)\n    .replace(/&/g, \"\\\\&\")\n    .replace(/%/g, \"\\\\%\")\n    .replace(/\\$/g, \"\\\\$\")\n    .replace(/#/g, \"\\\\#\")\n    .replace(/_/g, \"\\\\_\");\n\n}\n\n// ------------------------------\n// Convert bullets → latex items\n// ------------------------------\n\nfunction bulletsToLatex(list) {\n\n  return list\n    .filter(Boolean)\n    .map(b => `\\\\item ${escapeLatex(b)}`)\n    .join(\"\\n\");\n\n}\n\n// ------------------------------\n// Convert skills → tabular rows\n// ------------------------------\n\nfunction skillsToLatex(skillObject) {\n\n  const rows = [];\n\n  for (const category in skillObject) {\n\n    const items = skillObject[category] || [];\n\n    const row =\n      `\\\\small \\\\textbf{${escapeLatex(category)}}: ${items.map(escapeLatex).join(\", \")}\\\\\\\\`;\n\n    rows.push(row);\n\n  }\n\n  return rows.join(\"\\n\");\n\n}\n\n// ------------------------------\n// Build fragments\n// ------------------------------\n\nconst professional_tex = bulletsToLatex(professionalBullets);\nconst training_tex = bulletsToLatex(trainingBullets);\nconst skills_tex = skillsToLatex(skills);\n\n// ------------------------------\n// Clean previous build (safe)\n// ------------------------------\n\nif (fs.existsSync(buildPath)) {\n  fs.rmSync(buildPath, { recursive: true, force: true });\n}\n\n// ------------------------------\n// Create build directory\n// ------------------------------\n\nfs.mkdirSync(buildPath, { recursive: true });\n\n// ------------------------------\n// Copy LaTeX template\n// ------------------------------\n\nfs.cpSync(TEMPLATE_PATH, buildPath, {\n  recursive: true\n});\n\n// ------------------------------\n// Ensure generated directory\n// ------------------------------\n\nconst generatedDir = path.join(buildPath, \"generated\");\n\nfs.mkdirSync(generatedDir, { recursive: true });\n\n// ------------------------------\n// Write fragment files\n// ------------------------------\n\nconst files = {\n  \"professional.tex\": professional_tex,\n  \"training.tex\": training_tex,\n  \"skills.tex\": skills_tex\n};\n\nfor (const [filename, content] of Object.entries(files)) {\n\n  const filePath = path.join(generatedDir, filename);\n\n  fs.writeFileSync(filePath, content, {\n    encoding: \"utf8\"\n  });\n\n}\n\n// ------------------------------\n// Return updated item\n// ------------------------------\n\nreturn {\n  json: {\n    ...$json,\n    professional_tex,\n    training_tex,\n    skills_tex,\n   \n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        0
+      ],
+      "id": "0f68120c-c06a-476d-9810-f259128db801",
+      "name": "Node1_fragment_builder"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const fs = require(\"fs\");\n\nconst build = $(\"Node1_fragment_builder\").first().json;\n\nconst pdfPath = `${build.build_path}/main.pdf`;\nconst logPath = `${build.build_path}/main.log`;\n\nlet status = true;\nlet errors = [];\n\n\n// ---- check PDF exists ----\n\nif (!fs.existsSync(pdfPath)) {\n\n  status = false;\n  errors.push(\"PDF not generated\");\n\n}\n\n\n// ---- check file size ----\n\nif (status === true) {\n\n  const size = fs.statSync(pdfPath).size;\n\n  if (size < 2000) {\n    status = false;\n    errors.push(\"PDF too small, likely compile failure\");\n  }\n\n}\n\n\n// ---- check LaTeX log ----\n\nif (fs.existsSync(logPath)) {\n\n  const log = fs.readFileSync(logPath,\"utf8\");\n\n  if (\n    log.includes(\"! LaTeX Error\") ||\n    log.includes(\"Emergency stop\") ||\n    log.includes(\"Fatal error\")\n  ) {\n    status = false;\n    errors.push(\"LaTeX compilation error detected\");\n  }\n\n}\n\n\nreturn {\n  json: {\n\n    job_page_id: build.job_page_id,\n\n    build_id: build.build_id,\n\n    pdf_path: pdfPath,\n\n    build_path: `${build.build_path}`,\n\n    build_status: status,\n\n    compile_errors: errors\n\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        -16
+      ],
+      "id": "ef5f9a9a-2d2e-4f49-8e53-d7d8b4a180ab",
+      "name": "Node2_latex_validator"
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.pdf_path }}",
+        "options": {
+          "fileExtension": ".pdf"
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1088,
+        -16
+      ],
+      "id": "f7967be0-9d5f-4c5d-aab7-b7fe873a7243",
+      "name": "Node3_Disk",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "name": "={{ $('Node1_fragment_builder').item.json.build_id }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1gNP3koo6U8zYKufHKfiTIIeIpjnw0ZXY",
+          "mode": "list",
+          "cachedResultName": "Resume Builds",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/<GOOGLE_DRIVE_FOLDER_ID>"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1312,
+        -16
+      ],
+      "id": "d2b89cf3-0d7e-4e0a-bc0c-c7e7a1ef979b",
+      "name": "Node4_upload_drive",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "CaXX6fn5RsSEKf5f",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "share",
+        "fileId": {
+          "__rl": true,
+          "value": "={{$json.id}}",
+          "mode": "id"
+        },
+        "permissionsUi": {
+          "permissionsValues": {
+            "role": "reader",
+            "type": "anyone"
+          }
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1536,
+        -16
+      ],
+      "id": "bac042ae-110f-4f49-bb7e-8ef6651fbd55",
+      "name": "Node5_share_link",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "CaXX6fn5RsSEKf5f",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const data1 = $('Node6_notion_payload').item.json;\nconst data2 = $('Node2_latex_validator').item.json;\nreturn {\n  notionPageId: $json.id,\n  driveURL: data1.drive_url,\n  fileName: data1.file_name,\n  pdfPath: data2.pdf_path,\n  buildStatus: data2.build_status,\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2272,
+        -16
+      ],
+      "id": "32aa6594-3866-48b2-ae51-2c18dfe18379",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const fileId = $('Node4_upload_drive').item.json.id;\n\nconst build = $('Node2_latex_validator').item.json;\n\nreturn {\n  json: {\n    job_page_id: build.job_page_id,\n    drive_url: `https://drive.google.com/file/d/${fileId}/view`,\n    file_name: `${build.build_id}.pdf`,\n    page_id: build.job_page_id\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        -16
+      ],
+      "id": "cfbc3bb6-5de4-4ca8-a111-7ee3e5093ab4",
+      "name": "Node6_notion_payload"
+    }
+  ],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "job_page_id": "3183df5f-1b82-81e0-a09f-d41adf06287d",
+          "company": "Example Solutions",
+          "professional_bullets": [
+            "Led cloud security risk assessments for GCP-based financial systems using NIST and ISO 27001 frameworks, identifying IAM, encryption, and third-party risks across 20+ markets.",
+            "Designed and validated IAM controls in GCP, including RBAC and PIM, ensuring compliance with NIST 800-53 security controls.",
+            "Conducted DPIA for GCP financial processing workloads, mapping GDPR obligations to PII data flows and embedding privacy-by-design principles.",
+            "Owned and updated GCP risk registers, coordinating remediation efforts with engineering teams and validating control closure.",
+            "Led security risk assessments for GCP-based applications, identifying and mitigating IAM, encryption, and third-party risks.",
+            "Validated GCP security configurations, including Cloud Armor and Cloud Identity, to reduce unauthorized access and improve data protection."
+          ],
+          "training_bullets": [
+            "Assisted in documenting security control gaps and remediation actions during internal risk reviews aligned with ISO 27001 governance practices.",
+            "Supported preparation of audit evidence and compliance documentation during internal security assessments and governance reviews.",
+            "Assisted in tracking vulnerability remediation progress and validating closure of identified security findings across application environments."
+          ],
+          "skills": {
+            "Cloud & Security": [
+              "IAM Governance",
+              "Role-Based Access Control (RBAC)",
+              "Privileged Identity Management (PIM)",
+              "Azure Security Architecture Review",
+              "Encryption Controls",
+              "Data Privacy Impact Assessment (DPIA)",
+              "Privacy by Design",
+              "Vulnerability Remediation",
+              "Microsoft Azure",
+              "Azure Active Directory",
+              "Azure Key Vault",
+              "Azure RBAC",
+              "Control Validation",
+              "Control Mapping",
+              "Access Reviews"
+            ],
+            "Risk, Governance & Compliance": [
+              "Audit Remediation",
+              "NIST RMF",
+              "GDPR",
+              "Enterprise Risk Assessment",
+              "Risk Register Management",
+              "Policy Authoring",
+              "NIST 800-53",
+              "ISO 27001",
+              "SOC 2 Type II",
+              "SOC 2"
+            ]
+          },
+          "role_cluster": "cloud",
+          "coverage_score": 1
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Execute Command": {
+      "main": [
+        [
+          {
+            "node": "Node2_latex_validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Node0_build_path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node0_build_path": {
+      "main": [
+        [
+          {
+            "node": "Node1_fragment_builder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node1_fragment_builder": {
+      "main": [
+        [
+          {
+            "node": "Execute Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node2_latex_validator": {
+      "main": [
+        [
+          {
+            "node": "Node3_Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node3_Disk": {
+      "main": [
+        [
+          {
+            "node": "Node4_upload_drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node4_upload_drive": {
+      "main": [
+        [
+          {
+            "node": "Node5_share_link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node5_share_link": {
+      "main": [
+        [
+          {
+            "node": "Node6_notion_payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a database page": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node6_notion_payload": {
+      "main": [
+        [
+          {
+            "node": "Update a database page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "39859856-7239-4c67-ad18-a6d3d0bc1b1a",
+  "meta": {
+    "instanceId": "<N8N_INSTANCE_ID>"
+  },
+  "id": "Np5bSPPc3O0c5XcM",
+  "tags": []
+}

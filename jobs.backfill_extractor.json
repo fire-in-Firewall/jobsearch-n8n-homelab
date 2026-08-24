@@ -1,0 +1,566 @@
+{
+  "name": "jobs.backfill_extractor",
+  "nodes": [
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "<NOTION_DATABASE_ID>",
+          "mode": "list",
+          "cachedResultName": "Applications",
+          "cachedResultUrl": "https://www.notion.so/<NOTION_DATABASE_ID>"
+        },
+        "limit": 100,
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "key": "extractor_run_time|date",
+              "condition": "is_empty"
+            }
+          ]
+        },
+        "options": {
+          "sort": {
+            "sortValue": [
+              {
+                "key": "date_posted|date",
+                "direction": "descending"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        224,
+        -272
+      ],
+      "id": "fcf561c9-822e-40b5-9ed6-58fbb6077290",
+      "name": "Get many database pages",
+      "credentials": {
+        "notionApi": {
+          "id": "CcJYI2FD1dOseIwo",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": "=20",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        448,
+        -272
+      ],
+      "id": "711f5b9a-6ecd-4069-9535-5d8af1bad2de",
+      "name": "Loop Over Items",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const description = $json.safe_description || \"\";\n\nconst systemPrompt = `You extract structured job requirements.\n\nSTRICT OUTPUT RULES:\n- Output ONLY a single valid JSON object.\n- No markdown, commentary, explanations.\n- No duplicate items.\n- Keep must_have to MAX 6 items.\n- Keep nice_to_have to MAX 4 items.\n- Do NOT include years of working experience inside must_have or nice_to_have.\n- Experience years must go ONLY inside experience.min_years.\n- role_cluster_hint must contain exactly one value.\n- If multiple domains apply, select the dominant operational focus of the role.\n\nSECTION PRIORITY RULE:\n- When Duties, Responsibilities, Scope, or What You’ll Be Doing sections exist,\n  must_have must primarily come from those sections.\n- Operational responsibilities override qualifications/education.\n\nREQUIREMENT QUALITY RULE:\n- Each must_have must be a complete capability statement.\n- Preserve tools, frameworks, regulatory references, and scope verbs.\n- Only extract REQUIREMENTS that represent:\n  - Concrete technical capability\n  - Domain knowledge\n  - Tool or framework usage\n  - Security practice or methodology\n  - Compliance or governance responsibility\n\n- DO NOT extract generic soft skills such as:\n\n  - communication skills\n  - teamwork\n  - stakeholder management\n  - fast-paced environment\n  - self-starter\n  - passion for technology\n  - detail oriented\n  - problem solving ability\n  - ability to multitask\n  - ability to work independently\n\nThese are marketing language and MUST be ignored.\n\nOPERATIONAL PRIORITIZATION RULE:\n- Prioritize remediation, investigation, monitoring, implementation,\n  configuration management, governance enforcement, assessment.\n\nHARD CONSTRAINT RULE:\n- Include ONLY explicit disqualifiers.\n- Location restrictions\n- Shift requirements\n- Security clearance\n- Citizenship/work authorization\n- Explicit mandatory certifications\n- If none exist → return []\n\nCLUSTER RULES:\n- Governance, risk, ISO, NIST → grc\n- Vulnerability management, Qualys, Tenable → grc\n- SIEM, monitoring, incident response, EDR → soc\n- AWS/Azure/GCP security → cloud\n- Pentest/red team → offensive\n- Privacy/GDPR → privacy\n- App security/secure coding → appsec\n- If unclear → general\n\nSENIORITY RULE:\n- Leadership/ownership/strategy → senior\n- Execution-focused 1–3 yrs → junior/mid\n- If unclear → unknown\n\nEXPERIENCE RULE:\n- Extract min years ONLY if explicitly stated.\n- Else min_years = null.\n\nSCHEMA:\n{\n  \"role_title\": \"string\",\n  \"role_cluster_hint\": \"grc|soc|cloud|offensive|privacy|appsec|general\",\n  \"experience\": {\n    \"min_years\": number|null,\n    \"seniority_level\": \"junior|mid|senior|lead|unknown\"\n  },\n  \"must_have\": [\"string\"],\n  \"nice_to_have\": [\"string\"],\n  \"hard_constraints\": [\"string\"]\n}`;\n\nconst userPrompt = `Extract structured job requirements from the following job description:\n${description}`;\n\nreturn {\n  json: {\n    job_page_id: $json.job_page_id,\n    ollama_request_body: {\n      model: \"qwen2.5:7b\",\n      format: \"json\",\n      options: { \n        temperature: 0,\n        num_ctx: 4096,\n        num_predict: 500 \n      },\n      stream: false,\n      metadata: {\n        job_page_id: $json.job_page_id\n      },\n      messages: [\n        { role: \"system\", content: systemPrompt },\n        { role: \"user\", content: userPrompt }\n      ]\n    }\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        -336
+      ],
+      "id": "973bc08f-845a-436a-af3f-cdfb4036fdc5",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:11434/api/chat",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.ollama_request_body }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2016,
+        -416
+      ],
+      "id": "ae53351c-e84d-4a11-a126-4dd734317691",
+      "name": "HTTP Request",
+      "retryOnFail": false,
+      "waitBetweenTries": 300,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "resource": "block",
+        "operation": "getAll",
+        "blockId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        }
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        -240
+      ],
+      "id": "c3c1cedc-6b5f-4c00-8987-c08be05e5607",
+      "name": "Get many child blocks",
+      "credentials": {
+        "notionApi": {
+          "id": "CcJYI2FD1dOseIwo",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// All blocks returned from Notion\nconst allBlocks = $input.all().map(i => i.json);\n\n// Group blocks by page ID\nconst grouped = {};\n\nfor (const block of allBlocks) {\n\n  const pageId = block.parent?.page_id || block.parent_id;\n  if (!pageId) continue;\n\n  if (!grouped[pageId]) grouped[pageId] = [];\n\n  const pushText = (text) => {\n    if (text && text.trim()) grouped[pageId].push(text.trim());\n  };\n\n  // Handle normal Notion structure\n  const richText =\n    block.paragraph?.rich_text ||\n    block.heading_1?.rich_text ||\n    block.heading_2?.rich_text ||\n    block.heading_3?.rich_text ||\n    block.bulleted_list_item?.rich_text ||\n    block.numbered_list_item?.rich_text;\n\n  if (Array.isArray(richText)) {\n    pushText(richText.map(t => t.plain_text).join(\"\"));\n  }\n\n  // Handle simplified structure\n  else if (block.content) {\n    pushText(String(block.content));\n  }\n}\n\n// Convert grouped map into page-level items\nconst results = Object.entries(grouped).map(([pageId, blocks]) => {\n\n  let fullDescription = blocks.join(\"\\n\\n\").trim();\n\n  if (fullDescription.length > 12000) {\n    fullDescription = fullDescription.slice(0, 12000);\n  }\n\n  return {\n    json: {\n      job_page_id: pageId,\n      full_description: fullDescription\n    }\n  };\n});\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -240
+      ],
+      "id": "ea234f47-b6ee-402a-9b89-91150fb91013",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b8f617c6-4474-4441-b16e-77cbe160a80d",
+              "leftValue": "={{ $json.property_job_description_truncated }}",
+              "rightValue": "false",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        672,
+        -336
+      ],
+      "id": "8163291f-f5d5-45e6-8dad-0095c180aebc",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const pageId = $json.id;\n\nconst preview = $json.property_job_description;\n\nreturn {\n  json: {\n    job_page_id: pageId,\n    full_description: preview\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -432
+      ],
+      "id": "1de8a9ae-c9d2-4fc7-b9ef-2adb7c8266c8",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2240,
+        -336
+      ],
+      "id": "e0345ca4-f697-446a-b863-f4f80600b532",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1344,
+        -336
+      ],
+      "id": "50d16250-dc45-4d15-809b-5a0b2045a4c9",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "console.error(\"LLM JSON failed:\", {\n  job_page_id: $json.job_page_id,\n  error: $json.error?.message\n});\nreturn [];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        -464
+      ],
+      "id": "40117d7c-2e93-4ff5-b17f-dd8bbd49437e",
+      "name": "error logger",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/pages/{{ $json.job_page_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.notion_payload}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3184,
+        -272
+      ],
+      "id": "f30d0ef6-e1f1-425c-82bb-a786d6483830",
+      "name": "HTTP Request1",
+      "credentials": {
+        "notionApi": {
+          "id": "CcJYI2FD1dOseIwo",
+          "name": "Notion account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ======================================\n// BACKFILL JOB DESCRIPTION CLEANER\n// Place AFTER Merge Node\n// ======================================\n\nreturn items.map(item => {\n\n  // -----------------------------------\n  // Detect description field\n  // -----------------------------------\n\n  let original =\n    item.json.job?.description ||\n    item.json.description ||\n    item.json.full_description ||\n    \"\";\n\n  let description = original;\n\n  let cleaning_confidence = \"high\";\n  let start_anchor_used = null;\n  let end_anchor_used = null;\n\n  // -----------------------------------\n  // PHASE 1: NORMALIZATION\n  // -----------------------------------\n\n  description = description\n    .replace(/\\\\n/g,\"\\n\")\n    .replace(/\\/n/g,\"\\n\")\n    .replace(/\\u00a0/g,\" \")\n    .replace(/\\r\\n/g,\"\\n\")\n    .replace(/\\t/g,\" \")\n    .replace(/ +/g,\" \")\n    .replace(/\\n{3,}/g,\"\\n\\n\")\n    .trim();\n\n  // remove urls\n  description = description.replace(/https?:\\/\\/\\S+/g,\"\");\n\n  // safer line merge\n  description = description.replace(/([a-z])\\n([A-Z])/g,\"$1 $2\");\n\n\n  // ======================================\n  // REQUIREMENT SECTION EXTRACTOR\n  // ======================================\n\n  const sections = [\n\n    \"requirements\",\n    \"qualifications\",\n    \"skills and experience\",\n    \"what you'll need\",\n    \"what you will need\",\n    \"what we are looking for\",\n    \"minimum qualifications\",\n    \"preferred qualifications\",\n\n    \"responsibilities\",\n    \"key responsibilities\",\n    \"key accountabilities\",\n    \"duties\"\n\n  ];\n\n  let lower = description.toLowerCase();\n\n  let matches = [];\n\n  for (const marker of sections) {\n\n    const idx = lower.indexOf(marker);\n\n    if (idx !== -1) {\n\n      matches.push({\n        marker,\n        index: idx\n      });\n\n    }\n\n  }\n\n  matches.sort((a,b)=>a.index-b.index);\n\n  // -----------------------------------\n  // Prefer requirement sections\n  // -----------------------------------\n\n  const requirementMarkers = [\n    \"requirements\",\n    \"qualifications\",\n    \"skills and experience\",\n    \"minimum qualifications\",\n    \"preferred qualifications\"\n  ];\n\n  const requirementMatches =\n    matches.filter(m =>\n      requirementMarkers.includes(m.marker)\n    );\n\n  if (requirementMatches.length > 0) {\n    matches = requirementMatches;\n  }\n\n  let extractedSections = [];\n\n  for (let i = 0; i < matches.length; i++) {\n\n    const start = matches[i].index;\n\n    const end =\n      matches[i+1]?.index ||\n      description.length;\n\n    extractedSections.push(\n      description.slice(start,end)\n    );\n\n  }\n\n  let cleaned = extractedSections.join(\"\\n\\n\");\n\n  if (cleaned.length >= 300) {\n    description = cleaned;\n  }\n\n  lower = description.toLowerCase();\n\n\n  // -----------------------------------\n  // PHASE 2: START ANCHOR\n  // -----------------------------------\n\n  const startAnchors = [\n\n    \"requirements\",\n    \"qualifications\",\n    \"skills and experience\",\n    \"minimum qualifications\",\n    \"preferred qualifications\",\n\n    \"responsibilities\",\n    \"key responsibilities\",\n    \"key accountabilities\",\n\n    \"what you'll need\",\n    \"what you will need\",\n    \"what we are looking for\",\n\n    \"about the role\",\n    \"role summary\"\n\n  ];\n\n  let startIndex = -1;\n\n  const searchLimit =\n    Math.floor(description.length * 0.40);\n\n  for (const marker of startAnchors){\n\n    const idx = lower.indexOf(marker);\n\n    if(idx !== -1 && idx < searchLimit){\n\n      startIndex = idx;\n      start_anchor_used = marker;\n      break;\n\n    }\n\n  }\n\n  let sliced = description;\n\n  if(startIndex !== -1){\n\n    sliced = description.slice(startIndex);\n\n  } else {\n\n    cleaning_confidence = \"low\";\n\n  }\n\n  // -----------------------------------\n  // PHASE 3: OPTIONAL END ANCHOR\n  // -----------------------------------\n\n  const endAnchors = [\n\n    \"about us\",\n    \"company overview\",\n    \"equal opportunity employer\",\n    \"diversity and inclusion\",\n    \"benefits\",\n    \"privacy policy\",\n    \"legal disclaimer\",\n    \"job posting end date\"\n\n  ];\n\n  const slicedLower = sliced.toLowerCase();\n\n  let endIndex = -1;\n\n  for (const marker of endAnchors) {\n\n    const idx = slicedLower.indexOf(marker);\n\n    if (idx !== -1 && idx > 600 &&\n        idx < sliced.length * 0.9) {\n\n      endIndex = idx;\n      end_anchor_used = marker;\n      break;\n\n    }\n\n  }\n\n  if (endIndex !== -1) {\n\n    sliced = sliced.slice(0, endIndex);\n\n  }\n\n  // -----------------------------------\n  // PHASE 4: VALIDATION\n  // -----------------------------------\n\n  if(sliced.length < 400){\n\n    sliced = original;\n    cleaning_confidence = \"fallback_length\";\n\n  }\n\n  const bulletPattern =\n    /[-–—•*●○]\\s|\\d+\\.\\s|\\d+\\)/;\n\n  const hasBullet =\n    bulletPattern.test(sliced);\n\n  const hasSentence =\n    sliced\n      .split(\".\")\n      .some(s => s.trim().length > 20);\n\n  if(!hasBullet || !hasSentence){\n\n    sliced = original;\n    cleaning_confidence = \"fallback_structure\";\n\n  }\n\n  // -----------------------------------\n  // OUTPUT\n  // -----------------------------------\n\n  return {\n\n    json: {\n\n      ...item.json,\n\n      safe_description: sliced,\n\n      cleaning_meta: {\n\n        start_anchor_used,\n        end_anchor_used,\n\n        extracted_sections:\n          matches.map(m => m.marker),\n\n        original_length: original.length,\n        cleaned_length: sliced.length,\n\n        cleaning_ratio:\n          original.length\n            ? (sliced.length / original.length).toFixed(2)\n            : null,\n\n        confidence: cleaning_confidence\n\n      }\n\n    }\n\n  };\n\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        -336
+      ],
+      "id": "df4c58b8-9e83-475c-b82b-b08fc4c33f96",
+      "name": "clean_description"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ======================================\n// OLLAMA JSON PARSER\n// Run Once For All Items\n// ======================================\n\nconst output = [];\n\nfor (const item of items) {\n\n  const raw =\n    item.json.message?.content ||\n    item.json.response ||\n    \"\";\n\n  let parsed;\n\n  try {\n\n    parsed = JSON.parse(raw);\n\n  } catch (e) {\n\n    const start = raw.indexOf(\"{\");\n    const end = raw.lastIndexOf(\"}\");\n\n    if (start !== -1 && end !== -1) {\n\n      try {\n        parsed = JSON.parse(raw.slice(start,end+1));\n      } catch(err) {\n        parsed = null;\n      }\n\n    }\n\n  }\n\n  if (!parsed) {\n\n    output.push({\n      json:{\n        ...item.json,\n        parse_error: true\n      }\n    });\n\n    continue;\n\n  }\n\n  output.push({\n    json:{\n      ...item.json,\n      structured_requirements: parsed\n    }\n  });\n\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        -336
+      ],
+      "id": "0b69e687-0d2b-4b1e-aec8-bf6647edcdc3",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ====================================\n// REQUIREMENT CLEANER\n// Run Once For All Items\n// ====================================\n\nconst SOFT_SKILLS = [\n\n\"communication\",\n\"teamwork\",\n\"collaboration\",\n\"stakeholder\",\n\"interpersonal\",\n\"fast paced\",\n\"self starter\",\n\"motivated\",\n\"detail oriented\",\n\"multitask\",\n\"problem solving\",\n\"leadership\",\n\"presentation\"\n\n];\n\nconst TECH_SIGNALS = [\n\n\"risk\",\"control\",\"framework\",\"policy\",\"compliance\",\n\"security\",\"iam\",\"identity\",\"access\",\"cloud\",\n\"incident\",\"threat\",\"vulnerability\",\"audit\",\n\"governance\",\"nist\",\"iso\",\"soc\",\"gdpr\",\n\"rbac\",\"azure\",\"aws\",\"gcp\"\n\n];\n\nfunction isSoftSkill(text){\n\n  const lower = text.toLowerCase();\n\n  return SOFT_SKILLS.some(s => lower.includes(s));\n\n}\n\nfunction hasTechSignal(text){\n\n  const lower = text.toLowerCase();\n\n  return TECH_SIGNALS.some(k => lower.includes(k));\n\n}\n\nfunction scoreRequirement(text){\n\n  const lower = text.toLowerCase();\n\n  let score = 0;\n\n  TECH_SIGNALS.forEach(k=>{\n    if(lower.includes(k)) score += 2;\n  });\n\n  if(text.length > 100) score += 1;\n\n  return score;\n\n}\n\nreturn items.map(item => {\n\n  const structured = item.json.structured_requirements;\n\n  if(!structured) return item;\n\n  let must = structured.must_have || [];\n  let nice = structured.nice_to_have || [];\n\n  // remove soft skills\n  must = must.filter(r => !isSoftSkill(r));\n  nice = nice.filter(r => !isSoftSkill(r));\n\n  // require technical signal\n  must = must.filter(hasTechSignal);\n  nice = nice.filter(hasTechSignal);\n\n  // ranking\n  must = must\n    .map(r=>({text:r,score:scoreRequirement(r)}))\n    .sort((a,b)=>b.score-a.score)\n    .slice(0,6)\n    .map(r=>r.text);\n\n  nice = nice\n    .map(r=>({text:r,score:scoreRequirement(r)}))\n    .sort((a,b)=>b.score-a.score)\n    .slice(0,4)\n    .map(r=>r.text);\n\n  return {\n\n    json:{\n      ...item.json,\n\n      structured_requirements:{\n        ...structured,\n        must_have: must,\n        nice_to_have: nice\n      }\n\n    }\n\n  };\n\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        -336
+      ],
+      "id": "1ec4589f-dedf-4747-a683-068faa566a50",
+      "name": "Code in JavaScript4"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ========================================\n// NOTION PAYLOAD BUILDER\n// Run Once Per Item\n// ========================================\n\nconst req = $json.structured_requirements;\n\nif (!req || !req.role_title || !Array.isArray(req.must_have)) {\n  throw new Error(\"Invalid LLM structure\");\n}\n\nconst now = new Date();\n\n// ---- stringify JSON for storage ----\nconst content = JSON.stringify(req, null, 2);\n\n// ---- Extract experience safely ----\nconst minYears = typeof req.experience?.min_years === \"number\"\n  ? req.experience.min_years\n  : null;\n\nconst seniority = typeof req.experience?.seniority_level === \"string\"\n  ? req.experience.seniority_level\n  : \"unknown\";\n\nconst cluster = typeof req.role_cluster_hint === \"string\"\n  ? req.role_cluster_hint\n  : null;\n\n// ---- Chunk JSON for Notion (2000 char limit) ----\nconst maxChunkSize = 1950;\nconst chunks = [];\n\nfor (let i = 0; i < content.length; i += maxChunkSize) {\n  chunks.push({\n    type: \"text\",\n    text: {\n      content: content.slice(i, i + maxChunkSize)\n    }\n  });\n}\n\n// ---- Build Notion payload ----\nconst notion_payload = {\n\n  properties: {\n\n    structured_requirements: {\n      rich_text: chunks\n    },\n\n    extractor_run_time: {\n      date: {\n        start: now.toISOString()\n      }\n    },\n\n    job_minimum_years: {\n      number: minYears\n    },\n\n    job_cluster: cluster\n      ? { select: { name: cluster } }\n      : { select: null },\n\n    job_seniority: {\n      rich_text: [\n        {\n          type: \"text\",\n          text: { content: seniority }\n        }\n      ]\n    },\n\n    extractor_version: {\n      rich_text: [\n        {\n          type: \"text\",\n          text: { content: \"Backfill.V.0.2\" }\n        }\n      ]\n    }\n\n  }\n\n};\n\n// ---- Return single item ----\nreturn {\n  json: {\n    job_page_id: $json.job_page_id,\n    notion_payload\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2896,
+        -336
+      ],
+      "id": "69e36287-c67b-42c6-a9cd-f6e8797e9026",
+      "name": "Code in JavaScript5"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        -272
+      ],
+      "id": "8763144f-3d87-43fa-a7de-b1e46e0cd0b7",
+      "name": "When Executed by Another Workflow",
+      "executeOnce": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Get many database pages": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many child blocks": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get many child blocks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "clean_description",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "error logger": {
+      "main": [
+        []
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "clean_description": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript4": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript5": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Get many database pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "9e1dc3cf-71de-47a4-8861-dbb4c6abd629",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "<N8N_INSTANCE_ID>"
+  },
+  "id": "8AvVLNLCpSeM_LOs4OgKN",
+  "tags": []
+}

@@ -1,0 +1,445 @@
+{
+  "name": "jobs.tailor_resume",
+  "nodes": [
+    {
+      "parameters": {
+        "batchSize": 5,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        464,
+        128
+      ],
+      "id": "c48982d0-75a8-4654-a59d-3bf2b6b5e356",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "<NOTION_DATABASE_ID>",
+          "mode": "list",
+          "cachedResultName": "Applications",
+          "cachedResultUrl": "https://www.notion.so/<NOTION_DATABASE_ID>"
+        },
+        "limit": 100,
+        "simple": false,
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "key": "date_added|date",
+              "condition": "past_year"
+            },
+            {
+              "key": "Files & media|files",
+              "condition": "is_empty"
+            },
+            {
+              "key": "Job_fit|number",
+              "condition": "is_not_empty"
+            },
+            {
+              "key": "fit_label|select",
+              "condition": "does_not_equal",
+              "selectValue": "Not Eligible"
+            }
+          ]
+        },
+        "options": {
+          "sort": {
+            "sortValue": [
+              {
+                "key": "date_posted|date",
+                "direction": "ascending"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        16,
+        128
+      ],
+      "id": "0469959e-74a3-46ad-8321-f6ed8aa44486",
+      "name": "Node1_get_jobs",
+      "credentials": {
+        "notionApi": {
+          "id": "CcJYI2FD1dOseIwo",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "function parseRichText(prop) {\n  if (!prop?.rich_text) return \"\";\n\n  return prop.rich_text\n    .map(t => t.plain_text)\n    .join(\"\")\n    .trim();\n}\n\nfunction parseTitle(prop) {\n  if (!prop?.title) return \"\";\n\n  return prop.title\n    .map(t => t.plain_text)\n    .join(\"\")\n    .trim();\n}\n\nfunction parseSelect(prop) {\n  return prop?.select?.name || null;\n}\n\nfunction parseMultiSelect(prop) {\n  return prop?.multi_select?.map(s => s.name) || [];\n}\n\nfunction parseNumber(prop) {\n  return prop?.number ?? null;\n}\n\nfunction parseDate(prop) {\n  return prop?.date?.start ?? null;\n}\n\nfunction parseCheckbox(prop) {\n  return prop?.checkbox ?? false;\n}\n\nfunction parseProperty(prop) {\n\n  if (!prop) return null;\n\n  switch (prop.type) {\n\n    case \"title\":\n      return parseTitle(prop);\n\n    case \"rich_text\":\n      return parseRichText(prop);\n\n    case \"number\":\n      return parseNumber(prop);\n\n    case \"select\":\n      return parseSelect(prop);\n\n    case \"multi_select\":\n      return parseMultiSelect(prop);\n\n    case \"date\":\n      return parseDate(prop);\n\n    case \"checkbox\":\n      return parseCheckbox(prop);\n\n    default:\n      return null;\n  }\n}\n\nreturn items.map(item => {\n\n  const props = item.json.properties;\n  const result = {};\n\n  for (const key in props) {\n    result[key.toLowerCase()] = parseProperty(props[key]);\n  }\n\n  // Special parsing for JSON fields\n  let structured_requirements = {};\n\n  try {\n    structured_requirements = JSON.parse(result.structured_requirements || \"{}\");\n  } catch (e) {\n    console.error(\"Structured JSON parse error\", e);\n  }\n\n  return {\n    json: {\n      job_page_id: item.json.id,\n      ...result,\n      structured_requirements\n    }\n  };\n\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        128
+      ],
+      "id": "95756f6d-1e46-40b0-b050-a1d746d8d668",
+      "name": "Node2_notion_parser"
+    },
+    {
+      "parameters": {
+        "jsCode": "/*\nLoading dictionaries\n*/\n\nconst fs = require(\"fs\");\nconst path = require(\"path\");\n\nconst DICT_PATH = \"/PATH/TO/RESUME_SYSTEM_ROOT/builds/dictionaries\";\nconst VOCAB_PATH = \"/PATH/TO/RESUME_SYSTEM_ROOT/builds/vocab_learning\";\n\nconst PHRASE_MAP = JSON.parse(\n  fs.readFileSync(path.join(DICT_PATH,\"phrase_map.json\"),\"utf8\")\n);\n\nconst TOKEN_MAP = JSON.parse(\n  fs.readFileSync(path.join(DICT_PATH,\"token_map.json\"),\"utf8\")\n);\n\nconst DOMAIN_SIGNALS = JSON.parse(\n  fs.readFileSync(path.join(DICT_PATH,\"domain_signals.json\"),\"utf8\")\n);\n\nconst STOPWORDS = new Set(\n  JSON.parse(\n    fs.readFileSync(path.join(DICT_PATH,\"stopwords.json\"),\"utf8\")\n  )\n);\n\n/**\n Bigram loader\n */\nconst BIGRAM_CANDIDATE_FILE =\n  path.join(VOCAB_PATH,\"jd_bigram_candidates.json\");\n\nlet BIGRAM_CANDIDATES = {};\n\ntry {\n\n  const raw = fs.readFileSync(BIGRAM_CANDIDATE_FILE,\"utf8\");\n\n  if(raw.trim()){\n    BIGRAM_CANDIDATES = JSON.parse(raw);\n  }\n\n} catch(e){\n\n  BIGRAM_CANDIDATES = {};\n\n}\n// Bigram generator\n\nfunction extractBigrams(tokens){\n\n  const bigrams = [];\n\n  for(let i=0;i<tokens.length-1;i++){\n\n    const t1 = tokens[i];\n    const t2 = tokens[i+1];\n\n    if(STOPWORDS.has(t1)) continue;\n    if(STOPWORDS.has(t2)) continue;\n\n    if(NOISE.has(t1)) continue;\n    if(NOISE.has(t2)) continue;\n\n    const phrase = `${t1}_${t2}`;\n\n    bigrams.push(phrase);\n\n  }\n\n  return bigrams;\n\n}\n//Bigram capture\nfunction captureUnknownBigrams(bigrams,context){\n\n  for(const phrase of bigrams){\n\n    if(KNOWN_VOCAB.has(phrase)) continue;\n\n    if(!BIGRAM_CANDIDATES[phrase]){\n\n      BIGRAM_CANDIDATES[phrase] = {\n        count:0,\n        examples:[]\n      };\n\n    }\n\n    BIGRAM_CANDIDATES[phrase].count++;\n\n    if(BIGRAM_CANDIDATES[phrase].examples.length < 5){\n\n      BIGRAM_CANDIDATES[phrase].examples.push(context);\n\n    }\n\n  }\n\n}\n// token sorter before file append \nfunction sortCandidateDict(dict){\n\n  return Object.fromEntries(\n    Object.entries(dict)\n      .sort((a,b) => b[1].count - a[1].count)\n  );\n\n}\n/*\nCandidate store\n*/\n\nconst CANDIDATE_FILE =\n  path.join(VOCAB_PATH,\"jd_token_candidates.json\");\n\nlet TOKEN_CANDIDATES = {};\n\ntry {\n\n  const raw = fs.readFileSync(CANDIDATE_FILE,\"utf8\");\n\n  if(raw.trim()){\n    TOKEN_CANDIDATES = JSON.parse(raw);\n  }\n\n} catch(e){\n\n  TOKEN_CANDIDATES = {};\n\n}\n\n/*\nKnown vocabulary\n*/\n\nconst KNOWN_VOCAB = new Set([\n  ...Object.values(PHRASE_MAP),\n  ...Object.keys(TOKEN_MAP),\n  ...Object.values(TOKEN_MAP),\n  ...Object.values(DOMAIN_SIGNALS).flat()\n]);\n\nconst NOISE = new Set([\n\"team\",\"organization\",\"initiative\",\n\"program\",\"support\",\"environment\",\n\"experience\",\"ability\"\n]);\n\n/*\nHelpers\n*/\n\nfunction normalizePhrases(text){\n\n  let normalized = (text || \"\").toLowerCase();\n\n  const phrases = Object.keys(PHRASE_MAP)\n    .sort((a,b)=>b.length-a.length);\n\n  for(const phrase of phrases){\n\n    normalized =\n      normalized.replaceAll(phrase,PHRASE_MAP[phrase]);\n\n  }\n\n  return normalized;\n\n}\n\nfunction tokenize(text){\n\n  return (text || \"\")\n    .toLowerCase()\n    .replace(/[^\\w\\s]/g,\" \")\n    .split(/\\s+/)\n    .filter(w => w.length > 2 && !STOPWORDS.has(w));\n\n}\n\nfunction normalizeTokens(tokens){\n\n  return tokens.map(t => TOKEN_MAP[t] || t);\n\n}\n\nfunction extractTokens(text){\n\n  const phraseNormalized =\n    normalizePhrases(text);\n\n  const tokens =\n    tokenize(phraseNormalized);\n\n  const normalized =\n    normalizeTokens(tokens);\n\n  return normalized;\n\n}\n\n/*\nVocabulary learning\n*/\n\nfunction captureUnknownTokens(tokens,context){\n\n  for(const token of tokens){\n\n    if(token.length < 3) continue;\n\n    if(KNOWN_VOCAB.has(token)) continue;\n\n    if(NOISE.has(token)) continue;\n\n    if(!TOKEN_CANDIDATES[token]){\n\n      TOKEN_CANDIDATES[token] = {\n        count:0,\n        examples:[]\n      };\n\n    }\n\n    TOKEN_CANDIDATES[token].count++;\n\n    if(TOKEN_CANDIDATES[token].examples.length < 5){\n\n      TOKEN_CANDIDATES[token].examples.push(context);\n\n    }\n\n  }\n\n}\n\nfunction persistCandidates(){\n\n  const sortedTokens =\n    sortCandidateDict(TOKEN_CANDIDATES);\n\n  const sortedBigrams =\n    sortCandidateDict(BIGRAM_CANDIDATES);\n\n  fs.writeFileSync(\n    CANDIDATE_FILE,\n    JSON.stringify(sortedTokens,null,2)\n  );\n\n  fs.writeFileSync(\n    BIGRAM_CANDIDATE_FILE,\n    JSON.stringify(sortedBigrams,null,2)\n  );\n\n}\n\n/*\nProjection engine\n*/\n\nconst MIN_BULLETS = 6;\n\nconst DOMAIN_PRIORITY = {\n\n  cloud: [\n    \"cloud_security\",\n    \"identity_security\"\n  ],\n\n  grc: [\n    \"risk_management\",\n    \"security_governance\",\n    \"security_compliance\"\n  ],\n\n  privacy: [\n    \"data_privacy\"\n  ],\n\n  soc: [\n    \"security_operations\"\n  ]\n\n};\n\n/*\nRequirement token extraction\n*/\n\nfunction buildRequirementTokens(reqs){\n\n  return reqs.map(r => {\n\n   const tokens = extractTokens(r);\n\n    /* capture single tokens */\n    \n    captureUnknownTokens(tokens,r);\n    \n    /* generate bigrams */\n    \n    const bigrams = extractBigrams(tokens);\n    \n    /* capture phrases */\n\ncaptureUnknownBigrams(bigrams,r);\n\n    return {\n      text:r,\n      tokens:tokens\n    };\n\n  });\n\n}\nfunction inferDomains(reqTokens){\n\n  const domainScores = {};\n\n  for(const domain of Object.keys(DOMAIN_SIGNALS)){\n    domainScores[domain] = 0;\n  }\n\n  for(const r of reqTokens){\n\n    for(const token of r.tokens){\n\n      for(const [domain,signals] of Object.entries(DOMAIN_SIGNALS)){\n\n        if(signals.includes(token)){\n          domainScores[domain]++;\n        }\n\n      }\n\n    }\n\n  }\n\n  /*\n  Risk mitigation: ignore weak domains\n  */\n\n  const filtered = {};\n\n  for(const [domain,score] of Object.entries(domainScores)){\n\n    if(score >= 2){\n      filtered[domain] = score;\n    }\n\n  }\n\n  return filtered;\n\n}\n/*\nBullet scoring\n*/\n\nfunction scoreBullet(bullet, reqTokens, roleCluster, jdDomains){\n\n  const textTokens = extractTokens(bullet.text);\n\n  const tags = bullet.tags || [];\n  const o = bullet.ontology || {};\n\n  let score = 0;\n\n  /*\n  Token overlap\n  */\n\n  for(const r of reqTokens){\n\n    for(const t of r.tokens){\n\n      if(textTokens.includes(t))\n        score += 3;\n\n    }\n\n  }\n\n  /*\n  Tag boost\n  */\n\n  for(const tag of tags){\n\n    if(reqTokens.some(r => r.tokens.includes(tag)))\n      score += 4;\n\n  }\n\n  /*\n  JD domain boost\n  */\n\n  if(jdDomains[o.domain]){\n\n    const domainWeight = jdDomains[o.domain];\n\n    /*\n    Risk mitigation: cap domain boost\n    */\n\n    score += Math.min(domainWeight * 2,6);\n\n  }\n\n  return score;\n\n}\n\n/*\nSelection\n*/\n\nfunction selectBullets(bullets, reqTokens, roleCluster, jdDomains){\n\n  const scored = bullets\n    .map(b => ({\n      bullet:b,\n      score:scoreBullet(b,reqTokens,roleCluster, jdDomains)\n    }))\n    .sort((a,b)=>b.score-a.score);\n\n  return scored\n    .slice(0,MIN_BULLETS)\n    .map(x=>x.bullet);\n\n}\n\n/*\nSkill builder\n*/\n\nfunction buildSkills(canonical, bullets){\n\n  const skills = canonical.skills || [];\n  const tools = canonical.tools || [];\n  const frameworks = canonical.frameworks || [];\n\n  const signals = new Set([\n    ...bullets.flatMap(b => b.tags || [])\n  ]);\n\n  const cloudBucket = [];\n  const grcBucket = [];\n\n  const cloudSignals = [\n    \"azure\",\"rbac\",\"iam\",\"pim\",\"network\",\n    \"segmentation\",\"keyvault\",\"encryption\",\n    \"sentinel\",\"identity\",\"cloud\"\n  ];\n\n  const grcSignals = [\n    \"risk\",\"nist\",\"iso\",\"soc\",\"gdpr\",\n    \"audit\",\"compliance\",\"policy\",\"governance\"\n  ];\n\n  const all = [...skills,...tools,...frameworks];\n  const uniqueSkills = [...new Set(all)];\n\n  for(const skill of uniqueSkills){\n\n    const s = skill.toLowerCase();\n\n    if(cloudSignals.some(sig => s.includes(sig))){\n      cloudBucket.push(skill);\n    }\n    else if(grcSignals.some(sig => s.includes(sig))){\n      grcBucket.push(skill);\n    }\n    else{\n      cloudBucket.push(skill);\n    }\n\n  }\n\n  function rank(list){\n\n    return list\n      .map(skill => ({\n        skill,\n        score:[...signals].some(sig =>\n          skill.toLowerCase().includes(sig)\n        ) ? 3 : 0\n      }))\n      .sort((a,b)=>b.score-a.score)\n      .map(x=>x.skill)\n      .slice(0,15);\n\n  }\n\n  return {\n\n    \"Cloud & Security\": rank(cloudBucket),\n    \"Risk, Governance & Compliance\": rank(grcBucket)\n\n  };\n\n}\n\n/*\nMain\n*/\n\nreturn items.map(item => {\n\n  const job = item.json;\n\nconst canonical = job.canonical_profile_object || {};\nconst structured = job.structured_requirements || {};\n\nconst roleCluster =\n  structured.role_cluster_hint || \"general\";\n\n/*\nSTEP 1 — extract JD tokens\n*/\n\nconst reqTokens =\n  buildRequirementTokens(structured.must_have || []);\n\n/*\nSTEP 2 — infer JD domains\n*/\n\nconst jdDomains =\n  inferDomains(reqTokens);\n\n/*\nSTEP 3 — get bullet bank\n*/\n\nconst bulletBank =\n  canonical.bullet_bank || [];\n\n  const professional =\n    bulletBank.filter(b =>\n      b.experience !== \"industrial_training\"\n    );\n\n  const training =\n    bulletBank.filter(b =>\n      b.experience === \"industrial_training\"\n    );\n\n  const selected =\n    selectBullets(professional,reqTokens,roleCluster, jdDomains);\n\n  const industrialTraining =\n    training.slice(0,3).map(b=>({\n      id:b.id,\n      text:b.text,\n      tags:b.tags || [],\n      clusters:b.clusters || [],\n      ontology:b.ontology\n    }));\n\n  const skills =\n    buildSkills(canonical,selected);\n\n  persistCandidates();\n\n  return {\n\n    json:{\n      ...job,\n\n      projection:{\n\n        selected_bullets:selected,\n\n        industrial_training_bullets:industrialTraining,\n\n        skills:skills,\n\n        coverage_score:\n          selected.length / MIN_BULLETS,\n\n        debug: {\n\n  domains:selected.map(b => b.ontology?.domain),\n\n  clusters:selected.flatMap(b => b.clusters || []),\n\n  jd_domains: jdDomains\n\n}\n\n      }\n\n    }\n\n  };\n\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        48
+      ],
+      "id": "6ae90a46-d050-4326-a035-f44dd9b99f5b",
+      "name": "Node4_projection_engine"
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================\n// Prepare Resume Generation Payload\n// Runs once for all items\n// =====================================\n\nreturn items.map(item => {\n\n  const job = item.json;\n  const projection = job.projection || {};\n  const structured = job.structured_requirements || {};\n\n  // Preserve bullet structure (text + ontology)\n  const bullets = (projection.selected_bullets || [])\n    .map(b => typeof b === \"string\" ? { text: b } : b)\n    .filter(b => b.text);\n\n  const industrial_bullets = (projection.industrial_training_bullets || [])\n    .map(b => typeof b === \"string\" ? { text: b } : b)\n    .filter(b => b.text);\n\n  const skills = projection.skills || {};\n\n  const mustHave = structured.must_have || [];\n  const niceToHave = structured.nice_to_have || [];\n  const page_id = job.job_page_id;\n\n  return {\n    json: {\n\n      // -------- JOB CONTEXT --------\n      job_title: job.job_title,\n      company: job.company,\n      role_cluster: structured.role_cluster_hint || \"general\",\n      job_page_id: page_id,\n\n      // -------- REQUIREMENTS --------\n      requirements: {\n        must_have: mustHave,\n        nice_to_have: niceToHave\n      },\n\n      // -------- PROJECTION OUTPUT --------\n      evidence_bullets: bullets,\n      industrial_training_bullets: industrial_bullets,\n      projected_skills: skills,\n\n      // -------- METRICS --------\n      coverage_score: projection.coverage_score || 0,\n\n      // -------- DEBUG --------\n      matched_requirements: projection.matched_requirements || []\n\n    }\n  };\n\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1136,
+        48
+      ],
+      "id": "88a83123-2988-4492-8c12-d4a0c9adb3c0",
+      "name": "Node5_prepare_payload"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ======================================\n// Build Ollama Chat Payload\n// ======================================\n\nreturn items.map(item => {\n\n  const job = item.json;\n\n  // -----------------------------\n  // Extract fields safely\n  // -----------------------------\n\n  const jobTitle = job.job_title || \"\";\n  const company = job.company || \"\";\n  const roleCluster = job.role_cluster || \"general\";\n\n  const mustHave = job.requirements?.must_have || [];\n  const niceToHave = job.requirements?.nice_to_have || [];\n\n  const evidence = job.evidence_bullets || [];\n  const training_bullets = job.industrial_training_bullets || [];\n  const skills = job.projected_skills || [];\n  const matchedRequirements = job.matched_requirements || [];\n\n  // -----------------------------\n  // Pre-stringify reusable blocks\n  // -----------------------------\n\n  const mustHaveJSON = JSON.stringify(mustHave, null, 2);\n  const niceToHaveJSON = JSON.stringify(niceToHave, null, 2);\n  const evidenceJSON = JSON.stringify(evidence, null, 2);\n  const training_bullets_JSON = JSON.stringify(training_bullets, null, 2)\n  const skillsJSON = JSON.stringify(skills, null, 2);\n  const matchedReqJSON = JSON.stringify(matchedRequirements, null, 2);\n\n\n  // -----------------------------\n  // System Prompt\n  // -----------------------------\n\n  const systemPrompt = `\nYou are an expert cybersecurity resume optimizer.\n\nYour task is to refine cybersecurity resume bullets so they align with a specific job description while remaining factually accurate.\n\nThe input contains two separate evidence sources:\n\n1) PROFESSIONAL EXPERIENCE BULLETS  \n2) INDUSTRIAL TRAINING BULLETS  \n\nEach bullet also contains structured **ontology metadata** describing the type of work performed.\n\nThese represent different experience levels and must NEVER be mixed.\n\nThe projection engine has already selected the most relevant evidence.  \nYour role is to refine wording, clarity, and alignment with job requirements while preserving the original meaning of the evidence.\n\n-----------------------------------\nSTRICT RULES\n-----------------------------------\n\n1. Do not invent tools, technologies, certifications, or frameworks.\n2. Do not fabricate responsibilities or experience.\n3. Only reference technologies present in:\n   • the evidence bullets  \n   • the projected skills list\n4. Preserve the technical meaning of the original evidence.\n5. Do not change the underlying activity described in the bullet.\n6. Each bullet should be approximately 20–28 words and must not exceed 30 words.\n7. Generate exactly 6 PROFESSIONAL EXPERIENCE bullets.\n8. Generate exactly 3 INDUSTRIAL TRAINING bullets.\n\n-----------------------------------\nONTOLOGY-GUIDED NARRATIVE RULES\n-----------------------------------\n\nEach evidence bullet contains ontology metadata:\n\n• domain  \n• story_role  \n• ownership  \n• complexity  \n• impact  \n• evidence_type  \n\nUse these fields to guide the **structure, tone, and emphasis** of the rewritten bullet while preserving the original factual meaning.\n\nDo NOT invent new work or responsibilities.\n\nDOMAIN  \nThe domain defines the security discipline and should guide terminology.\n\nExamples:\n\nrisk_management → risk exposure, mitigation, governance  \nidentity_security → RBAC, identity governance, authentication controls  \ncloud_security → architecture, segmentation, Zero Trust, cloud workloads  \nsecurity_governance → controls, ISMS, compliance programs  \nsecurity_compliance → audits, assurance activities, evidence validation  \ndata_privacy → PII, DPIA, privacy-by-design, data protection  \nresilience → business continuity, disaster recovery, RTO/RPO  \nsecurity_operations → remediation, findings, vulnerability management  \n\nMaintain vocabulary appropriate to the domain.\n\nSTORY_ROLE  \nThe story_role defines the narrative function of the bullet.\n\nExamples:\n\nrisk_assessment → action + framework + identified risk areas  \nrisk_tracking → governance mechanism + remediation coordination  \ncontrol_design → security control + enforcement principle  \ncontrol_validation → validation activity + security objective  \narchitecture_review → architecture component + security alignment  \naudit_support → assurance activity + evidence validation  \npolicy_development → governance artifact + operational scope  \nresilience_testing → testing activity + recovery capability  \nrisk_communication → translation of technical risk to business impact  \n\nUse the story_role to shape the narrative structure.\n\nOWNERSHIP  \nOwnership defines authority level and must determine verb strength.\n\nlead → Led, Designed, Owned, Directed  \nexecute → Conducted, Implemented, Modeled, Validated  \nsupport → Supported, Coordinated  \nassist → Assisted, Contributed, Participated  \n\nNever increase the authority level beyond what ownership indicates.\n\nCOMPLEXITY  \nComplexity reflects technical depth.\n\nHigher complexity may include:\n\n• cross-system scope  \n• architectural context  \n• governance frameworks\n\nLower complexity should remain concise and operational.\n\nIMPACT  \nImpact reflects the importance of the activity.\n\nFor higher impact bullets, clearly communicate the **security value created** when it logically follows from the evidence.\n\nDo not fabricate quantitative metrics.\n\nEVIDENCE_TYPE  \nEvidence type defines the factual nature of the activity.\n\nExamples:\n\nrisk_assessment → identifying risk exposures  \nidentity_control → implementing or validating identity controls  \narchitecture_security → reviewing architecture security posture  \naudit_assurance → supporting assurance or compliance validation  \nprivacy_assessment → evaluating privacy risk and data protection  \nsecurity_policy → governance and policy development  \nresilience_validation → validating recovery readiness  \nsecurity_remediation → resolving security findings  \n\n\n-----------------------------------\nNARRATIVE PRESERVATION\n-----------------------------------\n\nThe selected bullets intentionally represent different areas of security work.\n\nPreserve diversity across activities such as:\n\n• security architecture reviews  \n• identity and access management  \n• risk assessment or governance  \n• remediation or vulnerability management  \n• compliance or control validation  \n• supporting technical security controls  \n\nDo not collapse multiple bullets into the same type of activity.\n\n-----------------------------------\nSECURITY VALUE EXPRESSION\n-----------------------------------\n\nWhere appropriate, communicate the security value created by the activity.\n\nExpress the outcome of the security control.\n\nExamples of value expressions include:\n\n• reducing unauthorized access risk  \n• strengthening identity governance controls  \n• reducing lateral movement exposure  \n• improving visibility into authentication or configuration activity  \n• strengthening regulatory compliance posture  \n• protecting sensitive data across cloud workloads  \n• improving monitoring and detection coverage  \n\nDo not invent quantitative metrics or fabricated results.\n\n-----------------------------------\nPROFESSIONAL EXPERIENCE RULES\n-----------------------------------\n\nProfessional bullets represent ownership of real work in production environments.\n\nUse confident language such as:\n\nLed  \nDesigned  \nConducted  \nImplemented  \nValidated  \nOwned  \nDirected  \nDelivered  \n\nDo not weaken these bullets or convert them to supportive language.\n\n-----------------------------------\nINDUSTRIAL TRAINING RULES\n-----------------------------------\n\nIndustrial training represents trainee-level exposure.\n\nUse supportive language such as:\n\nAssisted  \nSupported  \nParticipated in  \nContributed to  \nDocumented  \n\nTraining bullets must not imply ownership of production systems.\n\n-----------------------------------\nOUTPUT FORMAT\n-----------------------------------\n\nReturn valid JSON only.\n\n{\n  \"optimized_professional_bullets\": [\n    \"bullet 1\",\n    \"bullet 2\",\n    \"bullet 3\",\n    \"bullet 4\",\n    \"bullet 5\",\n    \"bullet 6\"\n  ],\n  \"optimized_training_bullets\": [\n    \"bullet 1\",\n    \"bullet 2\",\n    \"bullet 3\"\n  ]\n}\n\n-----------------------------------\nSECTION BOUNDARIES\n-----------------------------------\n\nProfessional bullets must only be generated from PROFESSIONAL EXPERIENCE evidence.\n\nTraining bullets must only be generated from INDUSTRIAL TRAINING evidence.\n\nNever move bullets between sections.`;\n\n\n  // -----------------------------\n  // User Prompt\n  // -----------------------------\n\n  const userPrompt = `\nYou are optimizing a cybersecurity resume for the following role.\n\nJOB TITLE:\n${jobTitle}\n\nCOMPANY:\n${company}\n\nROLE CLUSTER:\n${roleCluster}\n\n-----------------------------------\nJOB REQUIREMENTS\n-----------------------------------\n\nMust Have:\n${mustHaveJSON}\n\nNice To Have:\n${niceToHaveJSON}\n\n-----------------------------------\nEVIDENCE ALIGNMENT SIGNAL\n-----------------------------------\n\nThe following evidence bullets were algorithmically matched to job requirements.\n\nThese bullets should be treated as the primary evidence when refining the resume.\n\n${matchedReqJSON}\n\n-----------------------------------\nPROFESSIONAL EXPERIENCE EVIDENCE\n-----------------------------------\n\n${evidenceJSON}\n\n-----------------------------------\nINDUSTRIAL TRAINING EVIDENCE\n-----------------------------------\n\n${training_bullets_JSON}\n\n-----------------------------------\nPROJECTED SKILLS\n-----------------------------------\n\n${skillsJSON}\n\n-----------------------------------\nTASK\n-----------------------------------\n\nRefine the evidence bullets so they better align with the job requirements.\n\nPrefer improving clarity, impact, and alignment rather than restructuring the underlying activity.\n\nMaintain the factual meaning of each bullet.\n\n-----------------------------------\nALIGNMENT GUIDELINES\n-----------------------------------\n\n• Prioritize MUST HAVE job requirements  \n• Use technologies from the projected skills list when relevant  \n• Maintain technical accuracy  \n• Do not invent tools, technologies, or experience  \n\n-----------------------------------\nNARRATIVE PRESERVATION\n-----------------------------------\n\nThe evidence bullets intentionally represent different areas of cybersecurity work.\n\nWhen refining the bullets, preserve diversity across activities such as:\n\n• security architecture reviews  \n• identity and access management  \n• risk assessment or governance  \n• remediation and vulnerability management  \n• compliance or control validation  \n\nDo not collapse multiple bullets into the same type of activity.\n\n-----------------------------------\nOUTPUT FORMAT (STRICT JSON)\n-----------------------------------\n\n{\n  \"optimized_professional_bullets\": [\n    \"bullet 1\",\n    \"bullet 2\",\n    \"bullet 3\",\n    \"bullet 4\",\n    \"bullet 5\",\n    \"bullet 6\"\n  ],\n  \"optimized_training_bullets\": [\n    \"bullet 1\",\n    \"bullet 2\",\n    \"bullet 3\"\n  ]\n}\n`;\n\n\n  // -----------------------------\n  // Return Ollama Payload\n  // -----------------------------\n\n  return {\n    json: {\n      model: \"qwen2.5:7b\",\n      format: \"json\",\n      stream: false,\n      options: {\n        temperature: 0.4,\n        top_p: 0.85\n      },\n      messages: [\n        {\n          role: \"system\",\n          content: systemPrompt\n        },\n        {\n          role: \"user\",\n          content: userPrompt\n        }\n      ]\n    }\n  };\n\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        48
+      ],
+      "id": "86f80d5b-a528-4d77-9b66-2a3ee72b0794",
+      "name": "Node7_load_llm"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "<WORKFLOW_ID_REBIND_LOCALLY>",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/<WORKFLOW_ID_REBIND_LOCALLY>",
+          "cachedResultName": "jobs.canonical_loader"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        688,
+        48
+      ],
+      "id": "0931ceb3-1516-4891-a696-e54e73a6c73f",
+      "name": "Call 'jobs.canonical_loader'"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n\n  const d = item.json;\n\n  return {\n\n    json: {\n\n      job_page_id: d.job_page_id,\n      company: d.company,\n\n      professional_bullets:\n        d.llm_output.optimized_professional_bullets || [],\n\n      training_bullets:\n        d.llm_output.optimized_training_bullets || [],\n\n      skills:\n        d.projection_engine?.skills || {},\n\n      role_cluster: d.role_cluster,\n\n      coverage_score:\n        d.projection_engine?.coverage_score ?? null\n\n    }\n\n  };\n\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2256,
+        48
+      ],
+      "id": "dc992e4d-d3c8-4f36-bd48-a938ac4647ad",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "<WORKFLOW_ID_REBIND_LOCALLY>",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/<WORKFLOW_ID_REBIND_LOCALLY>",
+          "cachedResultName": "build_manager"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2480,
+        128
+      ],
+      "id": "369fb4d1-b3d2-4635-8890-122a05cf8b38",
+      "name": "build_manager"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:11434/api/chat",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1584,
+        48
+      ],
+      "id": "9a37f5d9-e738-45af-a51d-bd49e9146894",
+      "name": "Node8_LLM_call"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ======================================\n// Ollama JSON Parser\n// Run Once For All Items\n// ======================================\n\nconst output = [];\n\nfor (const item of items) {\n\n  const job = item.json;\n\n  const raw =\n    job.message?.content ||\n    job.response ||\n    job.content ||\n    \"\";\n\n  let jsonText = raw;\n\n  // ----------------------------\n  // Extract JSON block safely\n  // ----------------------------\n\n  const firstBrace = raw.indexOf(\"{\");\n  const lastBrace = raw.lastIndexOf(\"}\");\n\n  if (firstBrace !== -1 && lastBrace !== -1) {\n    jsonText = raw.slice(firstBrace, lastBrace + 1);\n  }\n\n  let parsed;\n  let parse_error = false;\n\n  try {\n\n    parsed = JSON.parse(jsonText);\n\n  } catch (e) {\n\n    parse_error = true;\n\n    output.push({\n      json: {\n        ok: false,\n        error_type: \"llm_parse_error\",\n        error: e.message,\n        raw_preview: raw.slice(0, 500),\n        ...job\n      }\n    });\n\n    continue;\n  }\n\n  // ----------------------------\n  // Validate structure\n  // ----------------------------\n\n  if (!Array.isArray(parsed.optimized_professional_bullets)) {\n\n    output.push({\n      json: {\n        ok: false,\n        error_type: \"Professional bullet array has invalid_structure\",\n        parsed,\n        ...job\n      }\n    });\n\n    continue;\n  }\n  \n\n\n  // ----------------------------\n  // Success case\n  // ----------------------------\n\n  output.push({\n    json: {\n      ok: true,\n      optimized_professional_bullets: parsed.optimized_professional_bullets,\n      optimized_training_bullets: parsed.optimized_training_bullets,\n      ...job\n    }\n  });\n\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1808,
+        48
+      ],
+      "id": "34fecf7a-5ab3-4f45-be01-2c1099f4a9cb",
+      "name": "Node9_json_parser"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// Debug Bundle Builder\n// Runs once for all items\n// ============================================\n\nconst jobs = items.map(i => i.json);\n\n// Pull static references once\nconst projectionItems = $('Node4_projection_engine').all();\nconst payloadItems = $('Node5_prepare_payload').all();\nconst llmPromptItems = $('Node7_load_llm').all();\n\nconst bundles = [];\n\nfor (let i = 0; i < jobs.length; i++) {\n\n  const job = payloadItems[i]?.json || {};\n  const projection = projectionItems[i]?.json?.projection || {};\n  const llmPrompt = llmPromptItems[i]?.json || {};\n  const llmParsed = jobs[i] || {};\n\n  const bundle = {\n\n    job_page_id: job.job_page_id,\n\n    job_title: job.job_title,\n    company: job.company,\n    role_cluster: job.role_cluster,\n\n    structured_requirements: job.requirements,\n\n    projection_engine: {\n\n      selected_bullets: projection.selected_bullets || [],\n      matched_requirements: projection.matched_requirements || [],\n      skills: projection.skills || [],\n      coverage_score: projection.coverage_score ?? null\n\n    },\n\n    llm_prompt: {\n\n      system: llmPrompt.messages?.[0]?.content || \"\",\n      user: llmPrompt.messages?.[1]?.content || \"\"\n\n    },\n\n    llm_output: {\n\n      optimized_professional_bullets:\n        llmParsed.optimized_professional_bullets || [],\n\n      optimized_training_bullets:\n        llmParsed.optimized_training_bullets || []\n\n    }\n\n  };\n\n  bundles.push({ json: bundle });\n\n}\n\nreturn bundles;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2032,
+        48
+      ],
+      "id": "9fa1a5cd-239d-47b6-8da6-ac4d6a7b65bc",
+      "name": "Node10_debug_bundler"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -208,
+        128
+      ],
+      "id": "3e12256d-def6-4dd3-b62b-0d7d1db93696",
+      "name": "When Executed by Another Workflow",
+      "executeOnce": true
+    }
+  ],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "job_title": "Cybersecurity PM Role",
+          "company": "A top education and training services company",
+          "candidate_profile": "Synthetic candidate profile for repository documentation only.\n\nCertifications:\n- Example cybersecurity certification\n\nFrameworks:\n- ISO 27001\n- NIST RMF\n- NIST 800-53\n\nTools & Platforms:\n- Microsoft Azure\n- Microsoft Entra ID\n- Azure Key Vault\n\nSecurity Capabilities:\n- Enterprise Risk Assessment\n- IAM Governance\n- Cloud Security Architecture Review\n- Security Monitoring\n- Incident Response Lifecycle\n\nThis fixture contains no real candidate identity or contact information.",
+          "ok": true
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Call 'jobs.canonical_loader'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node1_get_jobs": {
+      "main": [
+        [
+          {
+            "node": "Node2_notion_parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node2_notion_parser": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node4_projection_engine": {
+      "main": [
+        [
+          {
+            "node": "Node5_prepare_payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node5_prepare_payload": {
+      "main": [
+        [
+          {
+            "node": "Node7_load_llm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node7_load_llm": {
+      "main": [
+        [
+          {
+            "node": "Node8_LLM_call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'jobs.canonical_loader'": {
+      "main": [
+        [
+          {
+            "node": "Node4_projection_engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "build_manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "build_manager": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node8_LLM_call": {
+      "main": [
+        [
+          {
+            "node": "Node9_json_parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node9_json_parser": {
+      "main": [
+        [
+          {
+            "node": "Node10_debug_bundler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node10_debug_bundler": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Node1_get_jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "bcb7a3a4-a760-40f3-b2bf-0221be0d4860",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "<N8N_INSTANCE_ID>"
+  },
+  "id": "KVEmaFnRdmp1FjZb1tpIg",
+  "tags": []
+}

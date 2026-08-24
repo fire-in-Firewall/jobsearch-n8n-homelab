@@ -1,0 +1,112 @@
+{
+  "name": "dictionary_maintenance",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const fs = require(\"fs\");\nconst path = require(\"path\");\n\nconst BASE = \"/PATH/TO/RESUME_SYSTEM_ROOT/builds\";\n\nconst VOCAB_PATH = path.join(BASE,\"vocab_learning\");\nconst DICT_PATH = path.join(BASE,\"dictionaries\");\n\nconst TOKEN_FILE = path.join(VOCAB_PATH,\"jd_token_candidates.json\");\nconst BIGRAM_FILE = path.join(VOCAB_PATH,\"jd_bigram_candidates.json\");\n\nconst MIN_COUNT = 50;\n\n// ------------------------------\n// Helpers\n// ------------------------------\n\nfunction readJSON(file){\n  try{\n    const raw = fs.readFileSync(file,\"utf8\");\n    return raw.trim() ? JSON.parse(raw) : {};\n  }catch(e){\n    return {};\n  }\n}\n\nfunction filterAndSort(dict){\n  return Object.entries(dict)\n    .filter(([k,v]) => (v.count || 0) >= MIN_COUNT)\n    .sort((a,b) => (b[1].count || 0) - (a[1].count || 0))\n    .map(([token,data]) => ({\n      token,\n      count: data.count,\n      examples: data.examples\n    }));\n}\n\n// ------------------------------\n// Load dictionaries\n// ------------------------------\n\nconst PHRASE_MAP = readJSON(path.join(DICT_PATH,\"phrase_map.json\"));\nconst TOKEN_MAP = readJSON(path.join(DICT_PATH,\"token_map.json\"));\nconst DOMAIN_SIGNALS = readJSON(path.join(DICT_PATH,\"domain_signals.json\"));\n\n// ------------------------------\n// Load candidates\n// ------------------------------\n\nconst tokenCandidates = readJSON(TOKEN_FILE);\nconst bigramCandidates = readJSON(BIGRAM_FILE);\n\nconst tokens = filterAndSort(tokenCandidates);\nconst bigrams = filterAndSort(bigramCandidates);\n\n// ------------------------------\n// Load canonical from INPUT\n// ------------------------------\n\nconst canonical = $input.first().json.canonical_profile_object || {};\nconst bulletBank = canonical.bullet_bank || [];\n\n// ------------------------------\n// Reference sets\n// ------------------------------\n\nconst phraseOutputs = new Set(Object.values(PHRASE_MAP));\nconst tokenKeys = new Set(Object.keys(TOKEN_MAP));\nconst tokenValues = new Set(Object.values(TOKEN_MAP));\nconst domainTokens = new Set(Object.values(DOMAIN_SIGNALS).flat());\n\n// ------------------------------\n// Canonical token universe\n// ------------------------------\n\nconst canonicalTokens = new Set([\n  ...phraseOutputs,\n  ...tokenValues,\n  ...domainTokens\n]);\n\n// ------------------------------\n// JD token set\n// ------------------------------\n\nconst jdTokenSet = new Set(tokens.map(t => t.token));\n\n// ------------------------------\n// Tokenizer\n// ------------------------------\n\nfunction extractTokens(text){\n\n  let normalized = (text || \"\").toLowerCase();\n\n  const phrases = Object.keys(PHRASE_MAP)\n    .sort((a,b)=>b.length-a.length);\n\n  for(const phrase of phrases){\n    normalized = normalized.replaceAll(phrase, PHRASE_MAP[phrase]);\n  }\n\n  const tokens = normalized\n    .replace(/[^\\w\\s]/g,\" \")\n    .split(/\\s+/)\n    .filter(w => w.length > 2);\n\n  return tokens.map(t => TOKEN_MAP[t] || t);\n}\n\n// ------------------------------\n// Build bullet token set\n// ------------------------------\n\nconst bulletTokenSet = new Set();\n\nfor(const b of bulletBank){\n  const tokens = extractTokens(b.text);\n  tokens.forEach(t => bulletTokenSet.add(t));\n}\n\n// ------------------------------\n// Dictionary Health\n// ------------------------------\n\n// Dead tokens\nconst dead_tokens = [];\n\nfor(const token of canonicalTokens){\n  if(!jdTokenSet.has(token) && !bulletTokenSet.has(token)){\n    dead_tokens.push(token);\n  }\n}\n\n// Orphan canonical\nconst orphan_canonical_tokens = [];\n\nfor(const token of canonicalTokens){\n  if(!domainTokens.has(token)){\n    orphan_canonical_tokens.push(token);\n  }\n}\n\n// Domain coverage + gap\nconst domain_coverage = {};\n\nfor(const [domain, signals] of Object.entries(DOMAIN_SIGNALS)){\n\n  let jd_hits = 0;\n  let bullet_hits = 0;\n\n  for(const s of signals){\n    if(jdTokenSet.has(s)) jd_hits++;\n    if(bulletTokenSet.has(s)) bullet_hits++;\n  }\n\n  domain_coverage[domain] = {\n    signal_count: signals.length,\n    jd_hits,\n    bullet_hits,\n    gap: jd_hits - bullet_hits\n  };\n}\n\n// ------------------------------\n// Validation\n// ------------------------------\n\nconst unmapped_tokens = [];\nconst orphan_tokens = [];\nconst no_evidence_tokens = [];\nconst unknown_bullet_tokens = [];\nconst prioritized_fixes = [];\n\nfunction isMapped(token){\n  return (\n    phraseOutputs.has(token) ||\n    tokenKeys.has(token) ||\n    tokenValues.has(token)\n  );\n}\n\nfunction isInDomain(token){\n  return domainTokens.has(token);\n}\n\n// JD validation\nfor(const t of tokens){\n\n  const token = t.token;\n\n  const mapped = isMapped(token);\n  const inDomain = isInDomain(token);\n  const inBullets = bulletTokenSet.has(token);\n\n  if(!mapped) unmapped_tokens.push({ token, count: t.count });\n  if(!inDomain) orphan_tokens.push({ token, count: t.count });\n  if(!inBullets) no_evidence_tokens.push({ token, count: t.count });\n\n  let priority = t.count;\n  if(!mapped) priority *= 2;\n  if(!inDomain) priority *= 1.5;\n  if(!inBullets) priority *= 1.5;\n\n  if(!mapped || !inDomain || !inBullets){\n    prioritized_fixes.push({\n      token,\n      count: t.count,\n      mapped,\n      inDomain,\n      inBullets,\n      priority_score: Math.round(priority)\n    });\n  }\n}\n\n// Bullet validation\nfor(const token of bulletTokenSet){\n\n  const inDict =\n    phraseOutputs.has(token) ||\n    tokenKeys.has(token) ||\n    tokenValues.has(token);\n\n  if(!inDict){\n    unknown_bullet_tokens.push(token);\n  }\n}\n\n// ------------------------------\n// Token Trace (NEW)\n// ------------------------------\n\nconst tokenUniverse = new Set([\n  ...jdTokenSet,\n  ...bulletTokenSet,\n  ...canonicalTokens\n]);\n\nconst token_trace = {};\n\nfor(const token of tokenUniverse){\n\n  const mapped = isMapped(token);\n  const inDomain = isInDomain(token);\n  const inJD = jdTokenSet.has(token);\n  const inBullets = bulletTokenSet.has(token);\n\n  let status = \"healthy\";\n\n  if(!mapped) status = \"unmapped\";\n  else if(!inDomain) status = \"no_domain\";\n  else if(!inBullets) status = \"no_evidence\";\n  else if(!inJD) status = \"unused\";\n\n  token_trace[token] = {\n    jd: inJD,\n    mapped,\n    domain: inDomain,\n    bullet: inBullets,\n    status\n  };\n}\n\n// ------------------------------\n// Sort fixes\n// ------------------------------\n\nprioritized_fixes.sort((a,b) => b.priority_score - a.priority_score);\n\n// ------------------------------\n// Copy-friendly outputs\n// ------------------------------\n\nconst TOP_N = 40;\n\nconst prioritized_token_list = prioritized_fixes\n  .slice(0, TOP_N)\n  .map(x => x.token);\n\n// ------------------------------\n// Output\n// ------------------------------\n\nreturn [{\n  json:{\n    threshold: MIN_COUNT,\ndictionary_health: {\n      dead_tokens,\n      orphan_canonical_tokens,\n      domain_coverage\n    },\n    token_candidates: tokens,\n    bigram_candidates: bigrams,\n    bigram_fixes: bigrams.map(x => x.token),\n\n    \n\n    validation: {\n      prioritized_fixes,\n      prioritized_token_list,\n      unmapped_tokens,\n      unmapped_tokens_strings: unmapped_tokens.map(x => x.token),\n      orphan_tokens,\n      orphan_tokens_strings: orphan_tokens.map(x => x.token),\n      no_evidence_tokens,\n      no_evidence_tokens_strings: no_evidence_tokens.map(x => x.token),\n      unknown_bullet_tokens\n    },\n\n    token_trace\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        96
+      ],
+      "id": "b7746bfe-70bf-426b-a554-1bb97ffab807",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require(\"fs\");\nconst path = require(\"path\");\n\nconst BASE = \"/PATH/TO/RESUME_SYSTEM_ROOT/builds\";\n\nconst VOCAB_PATH = path.join(BASE,\"vocab_learning\");\nconst DICT_PATH = path.join(BASE,\"dictionaries\");\n\nconst TOKEN_CAND_FILE = path.join(VOCAB_PATH,\"jd_token_candidates.json\");\nconst BIGRAM_CAND_FILE = path.join(VOCAB_PATH,\"jd_bigram_candidates.json\");\n\nconst TOKEN_MAP_FILE = path.join(DICT_PATH,\"token_map.json\");\nconst PHRASE_MAP_FILE = path.join(DICT_PATH,\"phrase_map.json\");\nconst DOMAIN_SIGNALS_FILE = path.join(DICT_PATH,\"domain_signals.json\");\nconst STOPWORDS_FILE = path.join(DICT_PATH,\"stopwords.json\");\n\n/* ---------- helpers ---------- */\n\nfunction readJSON(file){\n  try{\n    const raw = fs.readFileSync(file,\"utf8\");\n    return raw.trim() ? JSON.parse(raw) : {};\n  }catch(e){\n    return {};\n  }\n}\n\nfunction writeJSON(file,obj){\n  fs.writeFileSync(file,JSON.stringify(obj,null,2));\n}\n\n/* ---------- load candidate pools ---------- */\n\nlet tokenCandidates = readJSON(TOKEN_CAND_FILE);\nlet bigramCandidates = readJSON(BIGRAM_CAND_FILE);\n\n/* ---------- load dictionaries ---------- */\n\nconst tokenMap = readJSON(TOKEN_MAP_FILE);\nconst phraseMap = readJSON(PHRASE_MAP_FILE);\nconst domainSignals = readJSON(DOMAIN_SIGNALS_FILE);\nconst stopwords = readJSON(STOPWORDS_FILE);\n\n/* ---------- build known vocabulary set ---------- */\n\nconst knownVocab = new Set([\n  ...Object.keys(tokenMap),\n  ...Object.values(tokenMap),\n  ...Object.values(phraseMap),\n  ...Object.values(domainSignals).flat(),\n  ...stopwords\n]);\n\n/* ---------- clean token candidates ---------- */\n\nlet removedTokens = 0;\n\nfor(const token of Object.keys(tokenCandidates)){\n\n  if(knownVocab.has(token)){\n    delete tokenCandidates[token];\n    removedTokens++;\n  }\n\n}\n\n/* ---------- clean bigram candidates ---------- */\n\nlet removedBigrams = 0;\n\nfor(const phrase of Object.keys(bigramCandidates)){\n\n  if(knownVocab.has(phrase)){\n    delete bigramCandidates[phrase];\n    removedBigrams++;\n  }\n\n}\n\n/* ---------- save cleaned files ---------- */\n\nwriteJSON(TOKEN_CAND_FILE,tokenCandidates);\nwriteJSON(BIGRAM_CAND_FILE,bigramCandidates);\n\n/* ---------- return summary ---------- */\n\nreturn [{\n  json:{\n    removed_tokens: removedTokens,\n    removed_bigrams: removedBigrams\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        96
+      ],
+      "id": "d7aa8c6d-4dcd-4ca0-afd4-39b0ba635042",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        96,
+        96
+      ],
+      "id": "3f6f2886-5bad-4801-82d0-c43769b676d0",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "<WORKFLOW_ID_REBIND_LOCALLY>",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/<WORKFLOW_ID_REBIND_LOCALLY>",
+          "cachedResultName": "jobs.canonical_loader"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        304,
+        96
+      ],
+      "id": "b3e18c53-9f3e-4021-84e0-8f69c2de3cdd",
+      "name": "Call 'jobs.canonical_loader'"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Code in JavaScript": {
+      "main": [
+        []
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Call 'jobs.canonical_loader'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'jobs.canonical_loader'": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "518b0ea0-6308-4009-9dd4-702a6e71bfc4",
+  "meta": {
+    "instanceId": "<N8N_INSTANCE_ID>"
+  },
+  "id": "FqjPyoO4Ew0KkJjN",
+  "tags": []
+}

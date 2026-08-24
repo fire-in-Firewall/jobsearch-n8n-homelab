@@ -1,0 +1,692 @@
+{
+  "name": "jobs.fit_score",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "jsonExample": "{\n  \"job_page_id\": \"abc123\",\n  \"job_title\": \"Security Analyst\",\n  \"company\": \"Example Corp\",\n  \"location\": \"India\",\n  \"posted_date\": \"2026-02-27\",\n  \"structured_requirements\": {\n    \"role_title\": \"Security Analyst\",\n    \"role_cluster_hint\": \"soc\",\n    \"experience\": {\n      \"min_years\": 3,\n      \"seniority_level\": \"mid\"\n    },\n    \"must_have\": [\"SIEM\", \"Incident Response\"],\n    \"nice_to_have\": [\"EDR\"],\n    \"hard_constraints\": []\n  }\n}"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        272
+      ],
+      "id": "549c42fa-2a9e-4a19-826f-979795763bbc",
+      "name": "When Executed by Another Workflow",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.ollama_request_body }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1344,
+        288
+      ],
+      "id": "5daf7efd-5b53-4f13-96e5-6b641abfbc83",
+      "name": "Node4 Ollama POST Request"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/pages/{{ $json.page_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2688,
+        48
+      ],
+      "id": "48c27353-e5b7-4a54-a88f-cfdba897dd25",
+      "name": "HTTP Request",
+      "credentials": {
+        "notionApi": {
+          "id": "CcJYI2FD1dOseIwo",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Node 5 outputs Notion's response, which doesn't have 'ok'\n// We'll add it back and keep everything else from Notion's response\n\nreturn [{\n  json: {\n    ...($json),           // Spread all Notion response fields\n    ok: true,             // Add back the success flag\n    notion_updated: true  // Optional: explicit flag for debugging\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2912,
+        48
+      ],
+      "id": "cfc0372c-caac-4af2-bc39-ff25c3a8698e",
+      "name": "Node6 Restore Ok Flag"
+    },
+    {
+      "parameters": {
+        "jsCode": "const scoringData = $json;\n\n// Check if scoring succeeded\nif (!scoringData.ok) {\n  // Return error state to orchestrator\n  return [{\n    json: {\n      ok: false,\n      error: scoringData.error || 'Unknown scoring error',\n      job_page_id: scoringData.job_page_id,\n      job_url: scoringData.job_url\n    }\n  }];\n}\n\n// Normal success path...\nconst jobData = $('Node2_prepare_scoring_input').first().json;\n\nreturn [{\n  json: {\n    job_page_id: scoringData.job_page_id,\n    job_url: scoringData.job_url,\n    job_title: jobData.job_title,\n    company: jobData.company,\n    fit_score: scoringData.fit_score,\n    status: scoringData.status,\n    analyzed_at: scoringData.analyzed_at,\n    analysis_version: scoringData.analysis_version,\n    summary: scoringData.summary,\n    candidate_page_id: jobData.candidate_page_id,\n    candidate_profile: jobData.candidate_profile,\n    ok: true\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        272
+      ],
+      "id": "e8a3e6e5-5b06-44c7-bdfa-a940355041a5",
+      "name": "Node7 Response To Orchestrator"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Just pass through the error data without calling Notion\nconst errorData = $json;\n\nconsole.error('⚠️ SKIPPING NOTION UPDATE - Parse/Validation Failed:', {\n  job_page_id: errorData.job_page_id,\n  job_title: errorData.job_title,\n  company: errorData.company,\n  job_url: errorData.job_url,\n  error_type: errorData.error_type,\n  error: errorData.error,\n  parse_error: errorData.parse_error,\n  validation_errors: errorData.validation_errors,\n  timestamp: errorData.timestamp\n});\n\n// Return the error data so it appears in execution results\nreturn [{\n  json: {\n    ...errorData,\n    skipped_notion_update: true,\n    reason: 'Parse or validation error - Notion not updated to preserve API quota'\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        272
+      ],
+      "id": "e17b1523-b2ff-473a-ab0c-f2bd56fe0d61",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        3136,
+        256
+      ],
+      "id": "9589a3a2-7243-4c67-989e-41bf7d51cfac",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "const job = $json;\nconst structured = job.structured_requirements || {};\nconst canonical = job.candidate_profile_object || {};\n\nlet eligible = true;\nlet reasons = [];\n\n// ------------------------------------\n// Experience Check (Master Canonical)\n// ------------------------------------\n\nconst requiredMinYears = structured.experience?.min_years ?? null;\nconst candidateYears =\n  canonical?.total_experience_years ?? 0;\n\n// Hard upper cap (absolute reject)\nconst HARD_CAP = 5;\n\n// Experience gap tolerance\nconst GAP_TOLERANCE = 2.2;\n\nif (typeof requiredMinYears === \"number\") {\n\n  // Reject very senior roles\n  if (requiredMinYears > HARD_CAP) {\n    eligible = false;\n    reasons.push(\n      `Role requires ${requiredMinYears}+ years (exceeds cap ${HARD_CAP})`\n    );\n  }\n\n  // Reject if gap too large\n  if (requiredMinYears - candidateYears > GAP_TOLERANCE) {\n    eligible = false;\n    reasons.push(\n      `Experience gap too large: requires ${requiredMinYears}, candidate has ${candidateYears}`\n    );\n  }\n}\n\n// ------------------------------------\n// Offensive Domain Mismatch\n// ------------------------------------\n\nconst roleCluster = structured.role_cluster_hint || \"general\";\n\nif (roleCluster === \"offensive\") {\n  eligible = false;\n  reasons.push(\"Offensive security role not aligned with candidate profile\");\n}\n\nreturn [{\n  json: {\n    ...job,\n    eligible,\n    ineligible_reasons: reasons\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        384
+      ],
+      "id": "ff785b02-17ee-4484-986a-4212eedcfd10",
+      "name": "Node2.5_hard_filter"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a35b62ec-48f6-41a3-a686-1aa69b5bb7f5",
+              "leftValue": "={{ $json.eligible }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        896,
+        384
+      ],
+      "id": "986b6037-b2b5-457b-9e5b-3ffe9c8b39c6",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "jsCode": "const reasonsArray = $input.first().json.ineligible_reasons || [];\n\nconst reasonsString = ($json.ineligible_reasons || [])\n  .map(r => ` ${r}`)\n  .join(\"\\\\n\");\n\n\nreturn [{\n  json: {\n    ok: true,\n    job_page_id: $input.first().json.job_page_id,\n    job_url: $input.first().json.job_url,\n    fit_score: 0,\n    status: \"Not Eligible\",\n    ai_notes_chunks: $input.first().json.ineligible_reasons,\n    analyzed_at: new Date().toISOString(),\n    analysis_version: \"hard_filter_v1\",\n    skip_llm: true,\n    ai_notes: \n      {\n        type: \"text\",\n        text: {\n          content: reasonsString\n        }\n      }\n    \n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        464
+      ],
+      "id": "9eb05aed-8636-4dda-8ead-619c01fadb35",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/pages/{{ $json.job_page_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"Job_fit\": {\n      \"number\": 0\n    },\n    \"Status\": {\n      \"select\":{\n        \"name\":\"Archived\"\n      }\n    },\n    \"fit_label\": {\n      \"select\": {\n        \"name\": \"Not Eligible\"\n      }\n    },\n    \"last_analyzed\": {\n      \"date\": {\n        \"start\": \"{{ new Date().toISOString() }}\"\n      }\n    },\n    \"analysis_version\": {\n      \"rich_text\": [\n        {\n          \"type\": \"text\",\n          \"text\": {\n            \"content\": \"hard_filter_v2\"\n          }\n        }\n      ]\n    },\n    \"ai_notes\": {\n      \"rich_text\": [\n        {\n          \"type\": \"text\",\n          \"text\": {\n            \"content\": \"{{ $json.ai_notes.text.content }}\"\n          }\n        }\n      ]\n    }\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2912,
+        464
+      ],
+      "id": "e251e396-684a-403a-b1dd-a6a23b0e2a72",
+      "name": "HTTP Request1",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "notionApi": {
+          "id": "CcJYI2FD1dOseIwo",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const candidate_profile = $json.candidate_profile; \nconst structured_requirements = JSON.stringify($json.structured_requirements);\n\nconst userPrompt = `STRUCTURED_REQUIREMENTS:\n${structured_requirements}\n\nCANDIDATE_PROFILE:\n${candidate_profile}\n\nINSTRUCTIONS:\nEvaluate the candidate against the structured_requirements above.\n\n- Only use the requirements listed in STRUCTURED_REQUIREMENTS.\n- Do not reference the original job description.\n- Do not infer new requirements.\n- Evaluate each requirement individually.\n- Return output strictly in the required JSON schema.`;\n\nconst systemPrompt = `You are an expert cybersecurity recruiter evaluating job-candidate fit.\n\nINPUTS:\n1) structured_requirements (deterministically extracted)\n2) candidate_profile (validated production experiences and tools usage)\n\nEVALUATION RULES:\n- Evaluate ONLY items inside structured_requirements.\n- Do NOT add, remove, or reinterpret requirements.\n- Do NOT change requirement wording.\n- You MUST return the same number of must_have and nice_to_have items as provided.\n- If must_have or nice_to_have arrays are empty, return empty arrays. Do not infer or generate new requirements.\n- Evaluate each requirement individually.\n- Use semantic matching (not exact keyword matching).\n- Mark \"missing\" ONLY if no capability supports it.\n- Do NOT assign numeric scores.\n- Do NOT calculate totals.\n\nCONFIDENCE SCALE:\n- \"high\" → strong direct evidence\n- \"medium\" → partial or indirect evidence\n- \"low\" → weak alignment\n- \"missing\" → no supporting evidence\n\nOUTPUT RULES:\n- Return exactly ONE valid JSON object.\n- No markdown.\n- No commentary.\n- No extra keys.\n- Strictly valid JSON (double quotes, no trailing commas).\n\nOUTPUT SCHEMA:\n\n{\n  \"must_have_requirements\": [\n    {\n      \"requirement\": \"string\",\n      \"confidence\": \"high|medium|low|missing\",\n      \"resume_evidence\": \"short excerpt or N/A\"\n    }\n  ],\n  \"nice_to_have_requirements\": [\n    {\n      \"requirement\": \"string\",\n      \"confidence\": \"high|medium|low|missing\",\n      \"resume_evidence\": \"short excerpt or N/A\"\n    }\n  ],\n  \"summary\": \"2-3 sentence evaluation\"\n}`\n\n\nconst ollamaBody = {\n  model: \"qwen2.5:7b\",\n  options:{\n    temperature: 0\n  },\n  stream: false,\n  format: \"json\",\n  messages: [\n    { role: \"system\", content: systemPrompt },\n    { role: \"user\", content: userPrompt }\n  ]\n};\n\nreturn {\n  json: {\n    ollama_request_body: ollamaBody,\n    job_page_id: $json.job_page_id\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        288
+      ],
+      "id": "c0b683ba-ae56-46f3-a50a-2c8a8bc222ce",
+      "name": "Node3_llm_prompt"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ----------------------------\n// Node2: Prepare Scoring Input\n// ----------------------------\n\nconst jobData = $json;\n\n\n// ----------------------------\n// 1️⃣ Parse structured_requirements safely\n// ----------------------------\n\nlet structured = {};\nconst rawStructured = jobData.structured_requirements;\n\nif (typeof rawStructured === \"object\" && rawStructured !== null) {\n  structured = rawStructured;\n}\nelse if (typeof rawStructured === \"string\" && rawStructured.trim().length > 0) {\n  try {\n    structured = JSON.parse(rawStructured.trim());\n  } catch (e) {\n    console.error(\"structured_requirements parse failed:\", e.message);\n    structured = {};\n  }\n}\n\nif (!structured || typeof structured !== \"object\") structured = {};\n\nif (!Array.isArray(structured.must_have)) structured.must_have = [];\nif (!Array.isArray(structured.nice_to_have)) structured.nice_to_have = [];\nif (!Array.isArray(structured.hard_constraints)) structured.hard_constraints = [];\n\nif (!structured.experience || typeof structured.experience !== \"object\") {\n  structured.experience = {\n    min_years: null,\n    seniority_level: \"unknown\"\n  };\n}\n\n\n// ----------------------------\n// 2️⃣ Canonical Candidate Profile\n// ----------------------------\n\nconst candidateProfile = jobData.canonical_profile_object || {};\n\n\n// ----------------------------\n// 3️⃣ Canonical → LLM Projection\n// ----------------------------\n\nconst flattened = [];\n\nif (candidateProfile.certifications?.length) {\n  flattened.push(\n    \"Certifications:\\n- \" +\n    candidateProfile.certifications.join(\"\\n- \")\n  );\n}\n\nif (candidateProfile.frameworks?.length) {\n  flattened.push(\n    \"Frameworks:\\n- \" +\n    candidateProfile.frameworks.join(\"\\n- \")\n  );\n}\n\nif (candidateProfile.tools?.length) {\n  flattened.push(\n    \"Tools & Platforms:\\n- \" +\n    candidateProfile.tools.join(\"\\n- \")\n  );\n}\n\nif (candidateProfile.skills?.length) {\n  flattened.push(\n    \"Security Capabilities:\\n- \" +\n    candidateProfile.skills.join(\"\\n- \")\n  );\n}\n\n\n// ---- Core Capability Sections ----\n\nconst core = candidateProfile.core_capabilities || {};\n\nObject.entries(core).forEach(([sectionName, section]) => {\n\n  const items =\n    section.activities ||\n    section.implementation_depth ||\n    section.control_validation ||\n    [];\n\n  if (!Array.isArray(items) || items.length === 0) return;\n\n  const formattedSection =\n    sectionName\n      .replace(/_/g, \" \")\n      .replace(/\\b\\w/g, c => c.toUpperCase());\n\n  flattened.push(\n    `${formattedSection}:\\n- ` +\n    items.slice(0,4).join(\"\\n- \")\n  );\n\n});\n\nconst flattenedCapabilitySummary = flattened.join(\"\\n\\n\");\n\n\n// ----------------------------\n// 4️⃣ Hard Experience Eligibility\n// ----------------------------\n\nconst minYearsRequired = structured.experience?.min_years;\nconst candidateYears =\n  candidateProfile?.total_experience_years ?? 0;\n\nlet eligible = true;\n\nif (typeof minYearsRequired === \"number\" && minYearsRequired > 5) {\n  eligible = false;\n}\n\n\n// ----------------------------\n// 5️⃣ Output\n// ----------------------------\n\nreturn {\n  json: {\n\n    eligible,\n\n    job_page_id: jobData.job_page_id,\n    job_title: jobData.job_title,\n    company: jobData.company,\n    job_url: jobData.job_url,\n    location: jobData.location,\n    posted_date: jobData.posted_date,\n\n    structured_requirements: structured,\n\n    candidate_profile: flattenedCapabilitySummary,   // LLM input\n    candidate_profile_object: candidateProfile        // deterministic scoring\n\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        272
+      ],
+      "id": "274d230d-2033-4f46-8c3e-f02cf3b6bd6c",
+      "name": "Node2_prepare_scoring_input"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1568,
+        176
+      ],
+      "id": "18a55f80-cb59-41f8-8a78-dcd54dfb7849",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "try {\n\n  // ---- ORIGINAL ENGINE CODE START ----\n\n  \n// =============================\n// Deterministic Scoring Engine\n// =============================\n\n// =============================\n// Deterministic Scoring Engine\n// (Self-contained with parser)\n// =============================\n\n// 1️⃣ Extract structured + candidate first\nconst structured = $json.structured_requirements || {};\nconst candidate = $json.candidate_profile_object || {};\n\n// 2️⃣ Parse LLM qualitative output safely\nlet llm = {};\nlet parse_error = false;\n\ntry {\n  const raw = $json.message?.content || \"\";\n  llm = JSON.parse(raw);\n} catch (e) {\n  parse_error = true;\n  llm = {};\n}\n\n// 3️⃣ Safe extraction of arrays\nconst llmMust = Array.isArray(llm.must_have_requirements)\n  ? llm.must_have_requirements\n  : [];\n\nconst llmNice = Array.isArray(llm.nice_to_have_requirements)\n  ? llm.nice_to_have_requirements\n  : [];\n\n// 4️⃣ Soft contract mismatch detection\nconst structuredCount = structured.must_have?.length || 0;\nconst llmCount = llmMust.length;\n\nconst contract_mismatch = structuredCount !== llmCount;\n\nconst clamp = (n, min, max) => Math.max(min, Math.min(max, n));\n\n// -----------------------------\n// CONFIGURATION (70 / 30)\n// -----------------------------\n\nconst MAX = {\n  A1: 20,\n  A2: 35,\n  A3: 15,\n  B1: 5,\n  B2: 18,\n  B3: 7,\n  PENALTY_CAP: -20\n};\n\n// -----------------------------\n// A1 EXPERIENCE (Deterministic)\n// -----------------------------\n\nconst requiredMinYears = structured.experience?.min_years ?? null;\nconst candidateYears = Number(candidate.total_experience_years || 0);\n\nlet A1 = 0;\n\nif (requiredMinYears === null) {\n  A1 = candidateYears >= 1 ? 15 : 5;\n} else {\n  if (candidateYears >= requiredMinYears) A1 = 20;\n  else if (candidateYears >= requiredMinYears - 1) A1 = 15;\n  else if (candidateYears > 0) A1 = 10;\n  else A1 = 0;\n}\n\nA1 = clamp(A1, 0, MAX.A1);\n\n// -----------------------------\n// A2 CORE TECHNICAL (Anchored to Structured)\n// -----------------------------\n\nconst structuredMust = Array.isArray(structured.must_have)\n  ? structured.must_have\n  : [];\n\n// Keep original mustHave for A3 + B1\nconst mustHave = llmMust.filter(r =>\n  r && typeof r === \"object\"\n);\n\nconst confidenceMap = {\n  high: 5,\n  medium: 3,\n  low: 1,\n  missing: 0\n};\n\nfunction isMatch(structReq, llmReq) {\n  const s = structReq.toLowerCase();\n  const l = llmReq.toLowerCase();\n\n  return (\n    s.includes(l) ||\n    l.includes(s)\n  );\n}\n\nlet rawA2 = 0;\nlet missingMust = 0;\n\nfor (const structReq of structuredMust) {\n\n  const match = mustHave.find(llmItem =>\n    llmItem &&\n    typeof llmItem.requirement === \"string\" &&\n    isMatch(structReq, llmItem.requirement)\n  );\n\n  if (match) {\n    const conf = typeof match.confidence === \"string\"\n      ? match.confidence\n      : \"missing\";\n\n    rawA2 += confidenceMap[conf] ?? 0;\n\n    if (conf === \"missing\") missingMust++;\n\n  } else {\n    missingMust++;\n  }\n}\n\n// IMPORTANT: mustCount now refers to structured count\nconst mustCount = structuredMust.length;\nconst maxRawA2 = mustCount * 5;\n\nlet A2 = 0;\n\nif (maxRawA2 > 0) {\n  A2 = Math.round((rawA2 / maxRawA2) * MAX.A2);\n}\n\nA2 = clamp(A2, 0, MAX.A2);\n\n// -----------------------------\n// A3 COMPLIANCE (Only if present)\n// -----------------------------\n\nlet A3 = 0;\n\nconst complianceKeywords = [\"iso\", \"nist\", \"soc2\", \"cis\", \"csf\", \"policy\", \"audit\"];\n\nconst complianceItems = mustHave.filter(r => {\n  if (!r.requirement || typeof r.requirement !== \"string\") return false;\n\n  return complianceKeywords.some(k =>\n    r.requirement.toLowerCase().includes(k)\n  );\n});\n\nif (complianceItems.length > 0) {\n  let raw = 0;\n  for (const r of complianceItems) {\n    raw += confidenceMap[r.confidence] ?? 0;\n  }\n  const maxRaw = complianceItems.length * 5;\n  A3 = Math.min(raw * 2 , 15);\n}\n\nA3 = clamp(A3, 0, MAX.A3);\n\n// -----------------------------\n// B1 PROOF QUALITY\n// -----------------------------\n\nlet strongMatches = mustHave.filter(r => r.confidence === \"high\").length;\n\nlet B1 = 0;\n\nif (strongMatches >= 3) B1 = 5;\nelse if (strongMatches >= 2) B1 = 3;\nelse if (strongMatches >= 1) B1 = 2;\nelse B1 = 0;\n\nB1 = clamp(B1, 0, MAX.B1);\n\n// -----------------------------\n// B2 NICE TO HAVE (Scaled)\n// -----------------------------\n\nconst nice = llm.nice_to_have_requirements || [];\nconst niceCount = nice.length;\n\nconst niceMap = {\n  high: 3,\n  medium: 2,\n  low: 1,\n  missing: 0\n};\n\nlet rawB2 = 0;\n\nfor (const r of nice) {\n  rawB2 += niceMap[r.confidence] ?? 0;\n}\n\nconst maxRawB2 = niceCount * 3;\nlet B2 = 0;\n\nif (maxRawB2 > 0) {\n  B2 = Math.round((rawB2 / maxRawB2) * MAX.B2);\n}\n\nB2 = clamp(B2, 0, MAX.B2);\n\n// -----------------------------\n// B3 CERT BONUS (Deterministic)\n// -----------------------------\n\n\nlet B3 = 0;\n\nconst certs = Array.isArray(candidate.certifications)\n  ? candidate.certifications.join(\" \").toLowerCase()\n  : \"\";\n\nif (/google cybersecurity|cissp|ccsp|ceh|iso|aws security/i.test(certs)) {\n  B3 = 5;\n}\n\nB3 = clamp(B3, 0, MAX.B3);\n\n// -----------------------------\n// PENALTIES\n// -----------------------------\n\nlet penalty = 0;\n\n// >50% must-have missing\nif (mustCount > 0 && (missingMust / mustCount) > 0.5) {\n  penalty -= 10;\n}\n\n// Seniority severe mismatch\nif (requiredMinYears !== null && candidateYears + 2 < requiredMinYears) {\n  penalty -= 5;\n}\n\npenalty = clamp(penalty, MAX.PENALTY_CAP, 0);\n\n// -----------------------------\n// FINAL SCORE\n// -----------------------------\n\nconst baseScore = A1 + A2 + A3 + B1 + B2 + B3;\nconst fitScore = clamp(baseScore + penalty, 0, 100);\n\n// -----------------------------\n// STATUS\n// -----------------------------\n\nlet status = \"Low Fit\";\nif (fitScore >= 75) status = \"Excellent Fit\";\nelse if (fitScore >= 60) status = \"Shortlisted\";\nelse if (fitScore >= 40) status = \"Moderate Fit\";\n\n// -----------------------------\n// RETURN\n// -----------------------------\n\n\nreturn {\n  json: {\n    fit_score: fitScore,\n    base_score: baseScore,\n    total_penalties: penalty,\n    A1,\n    A2,\n    A3,\n    B1,\n    B2,\n    B3,\n    status,\n    contract_mismatch,\n    llm_ouput: JSON.parse($json.message.content),\n    structured,\n    ...$json\n  }\n};\n\n\n  // ---- ORIGINAL ENGINE CODE END ----\n\n} catch (err) {\n  return {\n    json: {\n      fatal_error: true,\n      error_message: err.message,\n      error_stack: err.stack,\n      debug_keys: Object.keys($json),\n      raw_message: $json.message?.content\n    }\n  };\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        176
+      ],
+      "id": "f25400fb-4a67-4de1-b548-c87c112b86db",
+      "name": "Code in JavaScript2",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "try {\n\n  const response = $json;\n  const content = response.message?.content ?? '';\n\n  const jobPageId = response.job_page_id;\n  const jobUrl = response.job_url;\n  const jobTitle = response.job_title || 'Unknown Job';\n  const company = response.company || 'Unknown Company';\n\n  const structured = response.structured_requirements || {};\n  const candidate = response.candidate_profile_object || {};\n\n  const clamp = (n, min, max) => Math.max(min, Math.min(max, n));\n\n  // ----------------------------\n  // Parse LLM Output\n  // ----------------------------\n\n  let parsed;\n  try {\n    parsed = JSON.parse(content);\n  } catch (e) {\n    return {\n      json: {\n        ok: false,\n        error_type: 'parse_error',\n        job_page_id: jobPageId,\n        fit_score: null,\n        status: 'Parse Error'\n      }\n    };\n  }\n\n  if (\n    !Array.isArray(parsed.must_have_requirements) ||\n    !Array.isArray(parsed.nice_to_have_requirements)\n  ) {\n    return {\n      json: {\n        ok: false,\n        error_type: 'validation_error',\n        job_page_id: jobPageId,\n        fit_score: null,\n        status: 'Validation Error'\n      }\n    };\n  }\n\n  // ----------------------------\n  // Pull Deterministic Scores\n  // ----------------------------\n\n  const A1 = response.A1 ?? 0;\n  const A2 = response.A2 ?? 0;\n  const A3 = response.A3 ?? 0;\n  const B1 = response.B1 ?? 0;\n  const B2 = response.B2 ?? 0;\n  const B3 = response.B3 ?? 0;\n  const penalty = response.total_penalties ?? 0;\n\n  const baseScore = A1 + A2 + A3 + B1 + B2 + B3;\n  const fitScore = clamp(baseScore + penalty, 0, 100);\n\n  // ----------------------------\n  // Status\n  // ----------------------------\n\n  let status = \"Low Fit\";\n  if (fitScore >= 75) status = \"Excellent Fit\";\n  else if (fitScore >= 60) status = \"Shortlisted\";\n  else if (fitScore >= 40) status = \"Moderate Fit\";\n\n  // ----------------------------\n  // Human Readable Notes\n  // ----------------------------\n\n  const lines = [];\n\n  lines.push(`FIT SCORE: ${fitScore}/100`);\n  lines.push(`STATUS: ${status}`);\n  lines.push('══════════════════════════════');\n  lines.push('');\n\n  lines.push('SCORE BREAKDOWN');\n  lines.push('------------------------------');\n  lines.push(`A1 Experience            : ${A1}/20`);\n  lines.push(`A2 Core Technical        : ${A2}/35`);\n  lines.push(`A3 Compliance            : ${A3}/15`);\n  lines.push(`B1 Proof Quality         : ${B1}/5`);\n  lines.push(`B2 Nice-to-Haves         : ${B2}/18`);\n  lines.push(`B3 Certification Bonus   : ${B3}/7`);\n  lines.push(`Penalties                : ${penalty}`);\n  lines.push(`Base Score               : ${baseScore}/100`);\n  lines.push('');\n\n  lines.push(`Required Min Years: ${structured.experience?.min_years ?? 'Not Specified'}`);\n  lines.push(`Candidate Years   : ${candidate.total_experience_years ?? 0}`);\n  lines.push('');\n\n  lines.push(`MUST-HAVE REQUIREMENTS (${parsed.must_have_requirements.length})`);\n  lines.push('------------------------------');\n\n  for (const r of parsed.must_have_requirements) {\n    lines.push(`• ${r.requirement}`);\n    lines.push(`  Confidence: ${r.confidence}`);\n    lines.push(`  Evidence: ${r.resume_evidence || 'N/A'}`);\n    lines.push('');\n  }\n\n  lines.push(`GOOD-TO-HAVE REQUIREMENTS (${parsed.nice_to_have_requirements.length})`);\n  lines.push('------------------------------');\n\n  for (const r of parsed.nice_to_have_requirements) {\n    lines.push(`• ${r.requirement}`);\n    lines.push(`  Confidence: ${r.confidence}`);\n    lines.push(`  Evidence: ${r.resume_evidence || 'N/A'}`);\n    lines.push('');\n  }\n\n  lines.push('');\n  lines.push('SUMMARY');\n  lines.push('------------------------------');\n  lines.push(parsed.summary || 'No summary provided.');\n  lines.push('');\n  lines.push(`Analyzed: ${new Date().toISOString()}`);\n  lines.push(`Engine Version: fit_engine_v4_dual_layer`);\n  lines.push(`Model: qwen2.5`);\n\n  const humanReadableNotes = lines.join('\\n');\n\n  // ----------------------------\n  // Chunk for Notion\n  // ----------------------------\n\n  const chunks = [];\n  const maxChunkSize = 1950;\n\n  for (let i = 0; i < humanReadableNotes.length; i += maxChunkSize) {\n    chunks.push({\n      type: \"text\",\n      text: { content: humanReadableNotes.slice(i, i + maxChunkSize) }\n    });\n  }\nconst aiNotesJson = JSON.stringify(parsed, null, 2);\n\nconst jsonChunks = [];\nfor (let i = 0; i < aiNotesJson.length; i += maxChunkSize) {\n  jsonChunks.push({\n    type: \"text\",\n    text: { content: aiNotesJson.slice(i, i + maxChunkSize) }\n  });\n}\n  // ----------------------------\n  // Final Output to Notion\n  // ----------------------------\nconst promptTokens = response.prompt_eval_count ?? null;\nconst completionTokens = response.eval_count ?? null;\nconst totalTokens =\n  promptTokens !== null && completionTokens !== null\n    ? promptTokens + completionTokens\n    : null;\n\nconst totalDuration = response.total_duration\n  ? Number((response.total_duration / 1_000_000_000).toFixed(3))\n  : null;\n\nconst modelName = response.model ?? \"unknown\";\n  return {\n    json: {\n      ok: true,\n      job_page_id: jobPageId,\n      job_url: jobUrl,\n      job_title: jobTitle,\n      company: company,\n\n      fit_score: fitScore,\n      status,\n\n      base_score: baseScore,\n      total_penalties: penalty,\n\n      a1_experience_points: A1,\n      a2_technical_points: A2,\n      a3_compliance_points: A3,\n      b1_proof_points: B1,\n      b2_nice_to_have_points: B2,\n      b3_certification_bonus: B3,\n\n      must_have_count: structured.must_have?.length ?? 0,\n      nice_to_have_count: structured.nice_to_have?.length ?? 0,\n\n      ai_notes_chunks: chunks,\n      ai_notes_human: humanReadableNotes,\n      ai_notes_json_chunks: jsonChunks,\n\n      analyzed_at: new Date().toISOString(),\n      analysis_version: \"fit_engine_v4_dual_layer\",\n      llm_prompt_tokens: promptTokens,\nllm_completion_tokens: completionTokens,\nllm_total_tokens: totalTokens,\nllm_total_duration_ms: totalDuration,\nllm_model: modelName,\n    }\n  };\n\n} catch (err) {\n\n  return {\n    json: {\n      fatal_error: true,\n      error_message: err.message,\n      error_stack: err.stack\n    }\n  };\n\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        96
+      ],
+      "id": "7c392428-956d-4d3a-8d18-05fb53625f8e",
+      "name": "Node5 Ollama response handler",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Build clean Notion update payload\n\nreturn {\n  json: {\n    page_id: $json.job_page_id,\n\n    body: {\n      properties: {\n\n        Job_fit: {\n          number: $json.fit_score\n        },\n\n        fit_label: {\n          select: {\n            name: $json.status\n          }\n        },\n\n        last_analyzed: {\n          date: {\n            start: $json.analyzed_at\n          }\n        },\n\n        analysis_version: {\n          rich_text: [\n            {\n              type: \"text\",\n              text: { content: $json.analysis_version }\n            }\n          ]\n        },\n\n        A1_experience: { number: $json.a1_experience_points },\n        A2_technical: { number: $json.a2_technical_points },\n        A3_compliance: { number: $json.a3_compliance_points },\n        B1_proof: { number: $json.b1_proof_points },\n        B2_nice: { number: $json.b2_nice_to_have_points },\n        B3_cert: { number: $json.b3_certification_bonus },\n\n        base_score: { number: $json.base_score },\n        total_penalties: { number: $json.total_penalties },\n\n        llm_total_tokens: { number: $json.llm_total_tokens },\n        llm_prompt_tokens: { number: $json.llm_prompt_tokens },\n        llm_completion_tokens: { number: $json.llm_completion_tokens },\n        llm_duration_ms: { number: $json.llm_total_duration_ms },\n\n        llm_model: {\n          rich_text: [\n            {\n              type: \"text\",\n              text: { content: $json.llm_model || \"unknown\" }\n            }\n          ]\n        },\n\n        ai_notes: {\n          rich_text: $json.ai_notes_chunks\n        },\n\n        ai_notes_json: {\n          rich_text: $json.ai_notes_json_chunks\n        }\n\n      }\n    }\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        48
+      ],
+      "id": "308169e0-15eb-4efc-9dba-d874e0d79037",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "<WORKFLOW_ID_REBIND_LOCALLY>",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/<WORKFLOW_ID_REBIND_LOCALLY>",
+          "cachedResultName": "jobs.canonical_loader"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        224,
+        272
+      ],
+      "id": "6f1809ce-7c20-4820-9b9a-014d26824cce",
+      "name": "Call 'jobs.canonical_loader'"
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2688,
+        464
+      ],
+      "id": "8a8fd16e-7472-4bb2-ae4d-23fa1b41320b",
+      "name": "Wait",
+      "webhookId": "b5a46483-1259-483d-ae9e-e94903c83518"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1bf36461-60ed-4b72-86d0-2458458d8e40",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2240,
+        96
+      ],
+      "id": "d110c720-7176-4509-926d-203b35525773",
+      "name": "If1"
+    }
+  ],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "job_page_id": "34c3df5f-1b82-81eb-b8c3-e5b3d778fe6e",
+          "job_title": "Kavi Global - Azure Infrastructure Engineer - Cloud Security Alliance",
+          "company": "Kavi Global",
+          "location": "Chennai, Tamil Nadu, India",
+          "posted_date": "2026-03-03T00:19:00.000+00:00",
+          "structured_requirements": {
+            "role_title": "Azure Security Engineer",
+            "role_cluster_hint": "cloud",
+            "experience": {
+              "min_years": 3,
+              "seniority_level": "mid"
+            },
+            "must_have": [
+              "Design and deploy Azure infrastructure with a security-first mindset, aligned with CSA CCM and Azure Well-Architected Framework",
+              "Implement identity and access controls (RBAC, Azure AD, MFA, Conditional Access) as per CSA IAM domain",
+              "Ensure data protection using Azure encryption capabilities (at-rest, in-transit, and in-use)",
+              "Deploy network security architectures (NSGs, Azure Firewall, Private Link, ExpressRoute) compliant with CSA and NIST guidelines",
+              "Enable security monitoring and incident response with Azure Defender, Sentinel, and Security Center",
+              "Map and document infrastructure against CSA CCM controls"
+            ],
+            "nice_to_have": [
+              "Automate infrastructure provisioning with ARM templates, Bicep, or Terraform, integrating security guardrails",
+              "Perform periodic vulnerability assessments and remediation aligned with CSA guidelines",
+              "Strong understanding of identity and access management principles",
+              "Proficient in scripting (PowerShell, Azure CLI) and IaC (ARM/Bicep/Terraform)"
+            ],
+            "hard_constraints": []
+          }
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Call 'jobs.canonical_loader'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node4 Ollama POST Request": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Node6 Restore Ok Flag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node6 Restore Ok Flag": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Node7 Response To Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node2.5_hard_filter": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Node3_llm_prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Node3_llm_prompt": {
+      "main": [
+        [
+          {
+            "node": "Node4 Ollama POST Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node2_prepare_scoring_input": {
+      "main": [
+        [
+          {
+            "node": "Node2.5_hard_filter",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Node5 Ollama response handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node5 Ollama response handler": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'jobs.canonical_loader'": {
+      "main": [
+        [
+          {
+            "node": "Node2_prepare_scoring_input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "Asia/Kolkata",
+    "binaryMode": "separate"
+  },
+  "versionId": "09375fb1-4ec3-45ca-ba41-668d7f43539c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "<N8N_INSTANCE_ID>"
+  },
+  "id": "nKnR9ZGfwnH-drA5rEKnk",
+  "tags": []
+}

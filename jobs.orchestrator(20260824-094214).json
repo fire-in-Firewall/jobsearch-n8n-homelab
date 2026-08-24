@@ -1,0 +1,387 @@
+{
+  "name": "jobs.orchestrator",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        -160
+      ],
+      "id": "23906b85-6235-40d3-98c8-44063dd55850",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ----------------------------\n// Node6: Prepare Jobs For Fit Engine\n// ----------------------------\n\nconst jobs = $input.all().map(item => {\n  const page = item.json;\n\n  const postedDate = page.property_date_posted?.start ?? null;\n  const preview = page.property_job_description_preview ?? '';\n  const isTruncated = page.property_job_description_truncated === true;\n\n  let structured = {};\n  let structuredValid = false;\n\n  const raw = page.property_structured_requirements;\n\n  // ----------------------------\n  // Case 1 — Already Object\n  // ----------------------------\n  if (typeof raw === \"object\" && raw !== null && !Array.isArray(raw)) {\n    structured = raw;\n  }\n\n  // ----------------------------\n  // Case 2 — Plain JSON String\n  // ----------------------------\n  else if (typeof raw === \"string\" && raw.trim().length > 0) {\n    try {\n      structured = JSON.parse(raw.trim());\n    } catch (e) {\n      console.error(\"Structured JSON parse failed (string):\", {\n        job_page_id: page.id,\n        error: e.message\n      });\n      structured = {};\n    }\n  }\n\n  // ----------------------------\n  // Case 3 — Rich Text Array\n  // ----------------------------\n  else if (raw?.rich_text && Array.isArray(raw.rich_text)) {\n    const fullString = raw.rich_text\n      .map(r => r?.text?.content || \"\")\n      .join(\"\");\n\n    if (fullString.trim().length > 0) {\n      try {\n        structured = JSON.parse(fullString.trim());\n      } catch (e) {\n        console.error(\"Structured JSON parse failed (rich_text):\", {\n          job_page_id: page.id,\n          error: e.message\n        });\n        structured = {};\n      }\n    }\n  }\n\n  // ----------------------------\n  // Normalize Structure\n  // ----------------------------\n  structured.must_have = Array.isArray(structured.must_have)\n    ? structured.must_have\n    : [];\n\n  structured.nice_to_have = Array.isArray(structured.nice_to_have)\n    ? structured.nice_to_have\n    : [];\n\n  structured.hard_constraints = Array.isArray(structured.hard_constraints)\n    ? structured.hard_constraints\n    : [];\n\n  structured.experience =\n    structured.experience && typeof structured.experience === \"object\"\n      ? structured.experience\n      : { min_years: null, seniority_level: \"unknown\" };\n\n  structured.role_cluster_hint =\n    structured.role_cluster_hint ?? page.property_job_cluster ?? \"general\";\n\n  structured.role_title =\n    structured.role_title ?? page.property_position ?? \"\";\n\n  // ----------------------------\n  // JSON Integrity Check\n  // ----------------------------\n  if (\n    typeof structured === \"object\" &&\n    structured.must_have &&\n    structured.nice_to_have &&\n    structured.hard_constraints &&\n    structured.experience\n  ) {\n    structuredValid = true;\n  }\n\n  return {\n    json: {\n      job_page_id: page.id,\n      job_url: page.property_url ?? '',\n      job_title: page.property_position ?? '',\n      company: page.property_company ?? '',\n      location: page.property_location ?? '',\n      posted_date: postedDate,\n      description_preview: preview,\n      description_truncated: isTruncated,\n      structured_requirements: structured,\n      structured_valid: structuredValid,\n      job_minimum_years: page.property_job_minimum_years ?? null,\n      job_seniority: page.property_job_seniority ?? null,\n      job_cluster: page.property_job_cluster ?? null,\n      job_slug: page.property_slug ?? ''\n    }\n  };\n});\n\nreturn jobs;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        -160
+      ],
+      "id": "58a518f3-f322-4eb9-897a-344dc507ffc1",
+      "name": "Node6_prepare_job_items"
+    },
+    {
+      "parameters": {
+        "content": "Configure before ruuning",
+        "height": 288,
+        "width": 452
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        128,
+        -256
+      ],
+      "typeVersion": 1,
+      "id": "07697c50-0bb2-4896-a30b-dd3c603736ae",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "<WORKFLOW_ID_REBIND_LOCALLY>",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/<WORKFLOW_ID_REBIND_LOCALLY>",
+          "cachedResultName": "jobs.fit_score"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "job_page_id": "={{ $json.job_page_id }}",
+            "job_title": "={{ $json.job_title }}",
+            "company": "={{ $json.company }}",
+            "location": "={{ $json.location }}",
+            "posted_date": "={{ $json.posted_date }}",
+            "structured_requirements": "={{ $json.structured_requirements }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "job_page_id",
+              "displayName": "job_page_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "job_title",
+              "displayName": "job_title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "location",
+              "displayName": "location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "posted_date",
+              "displayName": "posted_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "structured_requirements",
+              "displayName": "structured_requirements",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            },
+            {
+              "id": "candidate_profile_json",
+              "displayName": "candidate_profile_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": true
+            },
+            {
+              "id": "candidate_page_id",
+              "displayName": "candidate_page_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1104,
+        -176
+      ],
+      "id": "4f040ed0-8cff-4049-b28e-6a292de97fce",
+      "name": "Node11 jobs.fit",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "<NOTION_DATABASE_ID>",
+          "mode": "list",
+          "cachedResultName": "Applications",
+          "cachedResultUrl": "https://www.notion.so/<NOTION_DATABASE_ID>"
+        },
+        "limit": 100,
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Job_fit|number",
+              "condition": "is_empty"
+            }
+          ]
+        },
+        "options": {
+          "sort": {
+            "sortValue": [
+              {
+                "key": "date_added|date",
+                "direction": "ascending"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        432,
+        -160
+      ],
+      "id": "99cb1770-6378-4f7d-848b-a0109711e937",
+      "name": "Node4_get_jobs_within_timelimit",
+      "executeOnce": true,
+      "credentials": {
+        "notionApi": {
+          "id": "CcJYI2FD1dOseIwo",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2f8668b7-958a-4785-b9b1-c58a1878496a",
+              "leftValue": "={{ $json.structured_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        -160
+      ],
+      "id": "8b398cb1-84ce-4f46-bebb-006d1475a96b",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "<WORKFLOW_ID_REBIND_LOCALLY>",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/<WORKFLOW_ID_REBIND_LOCALLY>",
+          "cachedResultName": "jobs.tailor_resume"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1312,
+        -176
+      ],
+      "id": "6822ab2b-db65-4c3c-bd1b-cd9d4556ac0c",
+      "name": "Call 'jobs.tailor_resume'",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "<WORKFLOW_ID_REBIND_LOCALLY>",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/<WORKFLOW_ID_REBIND_LOCALLY>",
+          "cachedResultName": "jobs.backfill_extractor"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        192,
+        -160
+      ],
+      "id": "9fa355ac-f3e4-42fe-8fe7-82670279bbae",
+      "name": "Call 'jobs.backfill_extractor'",
+      "alwaysOutputData": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Call 'jobs.backfill_extractor'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node6_prepare_job_items": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node4_get_jobs_within_timelimit": {
+      "main": [
+        [
+          {
+            "node": "Node6_prepare_job_items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Node11 jobs.fit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node11 jobs.fit": {
+      "main": [
+        [
+          {
+            "node": "Call 'jobs.tailor_resume'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'jobs.backfill_extractor'": {
+      "main": [
+        [
+          {
+            "node": "Node4_get_jobs_within_timelimit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "4f515ef2-e523-47eb-9f5e-827ed2e554ba",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "<N8N_INSTANCE_ID>"
+  },
+  "id": "UuHDgXKAqH1h0s1kB1ABs",
+  "tags": []
+}
